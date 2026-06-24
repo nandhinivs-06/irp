@@ -27,7 +27,7 @@
 		<url/>
 	</scm>
 	<properties>
-		<java.version>25</java.version>
+		<java.version>21</java.version>
 		<spring-ai.version>2.0.0</spring-ai.version>
 	</properties>
 	<dependencies>
@@ -144,6 +144,8 @@
 							<goal>compile</goal>
 						</goals>
 						<configuration>
+							<source>21</source>
+							<target>21</target>
 							<annotationProcessorPaths>
 								<path>
 									<groupId>org.projectlombok</groupId>
@@ -159,6 +161,8 @@
 							<goal>testCompile</goal>
 						</goals>
 						<configuration>
+							<source>21</source>
+							<target>21</target>
 							<annotationProcessorPaths>
 								<path>
 									<groupId>org.projectlombok</groupId>
