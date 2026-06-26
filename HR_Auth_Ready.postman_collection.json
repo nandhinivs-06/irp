@@ -1,0 +1,187 @@
+{
+  "info": {
+    "_postman_id": "7b44df70-24be-46a6-9f9b-hr-auth-ready",
+    "name": "HR Auth Ready",
+    "description": "Import this collection, start the HR app, then click Send on 1. Register User and 2. Login Same User. Register generates a unique email automatically; Login reuses it and saves the JWT token.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Register User",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const email = `postman${Date.now()}@hr.com`;",
+              "pm.collectionVariables.set('email', email);",
+              "pm.collectionVariables.set('password', 'Test@123');",
+              "pm.collectionVariables.set('name', 'Postman Test User');",
+              "pm.collectionVariables.set('roleName', 'candidate');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200 OK', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const json = pm.response.json();",
+              "",
+              "pm.test('User ID is returned', function () {",
+              "  pm.expect(json.userId).to.be.a('string').and.not.empty;",
+              "});",
+              "",
+              "pm.test('Registered email matches generated email', function () {",
+              "  pm.expect(json.email).to.eql(pm.collectionVariables.get('email'));",
+              "});",
+              "",
+              "pm.test('Registered user is active', function () {",
+              "  pm.expect(json.status).to.eql('ACTIVE');",
+              "});",
+              "",
+              "pm.test('Role is CANDIDATE', function () {",
+              "  pm.expect(json.role).to.eql('CANDIDATE');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"{{name}}\",\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"roleName\": \"{{roleName}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/auth/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "auth",
+            "register"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "2. Login Same User",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200 OK', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const json = pm.response.json();",
+              "",
+              "pm.test('JWT token is returned', function () {",
+              "  pm.expect(json.token).to.be.a('string').and.not.empty;",
+              "});",
+              "",
+              "pm.test('User ID is returned', function () {",
+              "  pm.expect(json.userId).to.be.a('string').and.not.empty;",
+              "});",
+              "",
+              "pm.test('Name is Postman Test User', function () {",
+              "  pm.expect(json.name).to.eql('Postman Test User');",
+              "});",
+              "",
+              "pm.test('Role is CANDIDATE', function () {",
+              "  pm.expect(json.role).to.eql('CANDIDATE');",
+              "});",
+              "",
+              "pm.collectionVariables.set('token', json.token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "auth",
+            "login"
+          ]
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8081",
+      "type": "string"
+    },
+    {
+      "key": "email",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "Test@123",
+      "type": "string"
+    },
+    {
+      "key": "name",
+      "value": "Postman Test User",
+      "type": "string"
+    },
+    {
+      "key": "roleName",
+      "value": "candidate",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

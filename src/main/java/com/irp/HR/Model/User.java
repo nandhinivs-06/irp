@@ -2,15 +2,19 @@ package com.irp.HR.Model;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import org.hibernate.annotations.UuidGenerator;
+
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Data
 @Entity
 @Table(name = "users")
 public class User {
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @GeneratedValue
+    @UuidGenerator
+    private UUID id;
 
     @Column(nullable = false)
     private String name;
@@ -26,7 +30,8 @@ public class User {
     private Role role;  // RECRUITER or CANDIDATE
 
     @Column(nullable = false)
-    private String status;  // ACTIVE, INACTIVE, BLOCKED
+    @Enumerated(EnumType.STRING)
+    private UserStatus status;  // ACTIVE, INACTIVE, BLOCKED
 
     @Column(updatable = false)
     private LocalDateTime createdAt;
