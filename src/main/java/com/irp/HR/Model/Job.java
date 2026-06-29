@@ -13,12 +13,10 @@ import java.util.UUID;
 /**
  * Job postings table.
  *
- * NOTE: the original SRS ER diagram only had id/title/status/created_at —
- * no column for the actual JD text. FR-07 says recruiters create jobs
- * "with title, description, and requirements", so `description` is added
- * here to hold the JD text pasted into the textbox on job creation.
- * See db/migration/V2__add_jobs_description.sql if your `jobs` table
- * already exists without this column.
+ * `description` holds the full pasted JD text. `requiredSkills` is a
+ * separate box on the form — the recruiter types comma-separated skills
+ * (e.g. "Java, Spring Boot, PostgreSQL") so matching logic later can work
+ * off a short skill list instead of having to parse the whole JD text.
  */
 @Entity
 @Table(name = "jobs")
@@ -39,6 +37,9 @@ public class Job {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String description; // pasted JD text
 
+    @Column(name = "required_skills", nullable = false, columnDefinition = "TEXT")
+    private String requiredSkills; // comma-separated, e.g. "Java, Spring Boot, PostgreSQL"
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private JobStatus status = JobStatus.DRAFT;
@@ -47,10 +48,11 @@ public class Job {
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
-    public static Job createDraft(String title, String description) {
+    public static Job createDraft(String title, String description, String requiredSkills) {
         Job job = new Job();
         job.title = title;
         job.description = description;
+        job.requiredSkills = requiredSkills;
         job.status = JobStatus.DRAFT;
         return job;
     }

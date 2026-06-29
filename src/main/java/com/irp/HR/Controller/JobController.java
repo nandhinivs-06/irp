@@ -1,8 +1,8 @@
 package com.irp.HR.Controller;
 
 
-import com.irp.HR.Dto.JobRequest;
-import com.irp.HR.Dto.JobResponse;
+import com.irp.HR.DTO.JobRequest;
+import com.irp.HR.DTO.JobResponse;
 import com.irp.HR.Model.Job;
 import com.irp.HR.Model.JobStatus;
 import com.irp.HR.Service.JobService;
@@ -25,8 +25,8 @@ public class JobController {
     private final JobService jobService;
 
     /**
-     * Recruiter creates a job posting: pick/enter the role title, paste the
-     * JD text into a textarea. Always starts in DRAFT — recruiter activates
+     * Recruiter creates a job posting: title, pasted JD text, and the
+     * required skills box. Always starts in DRAFT — recruiter activates
      * it explicitly via PATCH /jobs/{id}/status.
      */
     @PostMapping
@@ -57,10 +57,6 @@ public class JobController {
 
     /**
      * Lifecycle transition: DRAFT -> ACTIVE -> CLOSED (FR-08).
-     * Takes the new status as a query param rather than a request body DTO,
-     * since there's no separate "UpdateJobRequest" in the dto package —
-     * keeps this to the JobRequest/JobResponse pair already defined there.
-     *
      * Example: PATCH /jobs/{jobId}/status?status=ACTIVE
      */
     @PatchMapping("/{jobId}/status")

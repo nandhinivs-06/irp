@@ -1,4 +1,4 @@
-package com.irp.HR.Dto;
+package com.irp.HR.DTO;
 
 import com.irp.HR.Model.Job;
 import com.irp.HR.Model.JobStatus;
@@ -10,6 +10,7 @@ public record JobResponse(
         UUID id,
         String title,
         String description,
+        String requiredSkills,
         JobStatus status,
         OffsetDateTime createdAt
 ) {
@@ -18,6 +19,7 @@ public record JobResponse(
                 job.getId(),
                 job.getTitle(),
                 job.getDescription(),
+                job.getRequiredSkills(),
                 job.getStatus(),
                 job.getCreatedAt()
         );

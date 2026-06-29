@@ -1,5 +1,6 @@
 package com.irp.HR.Service;
-import com.irp.HR.Dto.JobRequest;
+
+import com.irp.HR.DTO.JobRequest;
 import com.irp.HR.Exception.InvalidJobTransitionException;
 import com.irp.HR.Exception.JobNotFoundException;
 import com.irp.HR.Model.Job;
@@ -34,7 +35,7 @@ public class JobService {
 
     @Transactional
     public Job createJob(JobRequest request) {
-        Job job = Job.createDraft(request.title(), request.description());
+        Job job = Job.createDraft(request.title(), request.description(), request.requiredSkills());
         return jobRepository.save(job);
     }
 

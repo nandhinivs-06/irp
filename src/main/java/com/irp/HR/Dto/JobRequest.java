@@ -1,16 +1,13 @@
-package com.irp.HR.Dto;
-
+package com.irp.HR.DTO;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 /**
- * What the recruiter submits to create a job: pick/type a title, paste
- * the JD text into a textarea on the frontend.
- *
- * (Status transitions don't use this DTO — see JobController, the
- * PATCH /jobs/{id}/status endpoint takes the new status as a query param
- * instead, since there's no separate UpdateJobRequest in the file list.)
+ * What the recruiter submits to create a job: title, the pasted JD text,
+ * and now a separate box for required skills (comma-separated — e.g.
+ * "Java, Spring Boot, PostgreSQL"). Kept as one free-text field rather
+ * than a list, since the form has one box for it.
  */
 public record JobRequest(
 
@@ -20,7 +17,10 @@ public record JobRequest(
 
         @NotBlank(message = "Job description is required")
         @Size(min = 20, message = "Paste the full job description (min 20 characters)")
-        String description
+        String description,
+
+        @NotBlank(message = "Required skills are required")
+        @Size(min = 2, message = "List at least one required skill")
+        String requiredSkills
 ) {
 }
-
