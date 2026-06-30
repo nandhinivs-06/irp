@@ -33,7 +33,6 @@ public class Job {
     @Column(nullable = false, length = 255)
     private String title;
 
-    @Lob
     @Column(nullable = false, columnDefinition = "TEXT")
     private String description; // pasted JD text
 

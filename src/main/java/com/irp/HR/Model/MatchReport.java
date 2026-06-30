@@ -37,11 +37,9 @@ public class MatchReport {
     @Column(name = "match_score", nullable = false)
     private double matchScore; // 0-100, percentage of required skills the resume covers
 
-    @Lob
     @Column(name = "matched_skills", columnDefinition = "TEXT")
     private String matchedSkills; // comma-separated
 
-    @Lob
     @Column(name = "missing_skills", columnDefinition = "TEXT")
     private String missingSkills; // comma-separated - required but not found on the resume
 

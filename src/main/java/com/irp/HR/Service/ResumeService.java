@@ -77,9 +77,17 @@ public class ResumeService {
         if (file.getSize() > MAX_FILE_SIZE) {
             throw new ResumeParsingException("File exceeds the 10 MB limit.");
         }
+
         String contentType = file.getContentType();
-        if (!PDF_TYPE.equals(contentType) && !DOCX_TYPE.equals(contentType)) {
-            throw new ResumeParsingException("Only PDF and DOCX files are accepted.");
+        String fileName = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase();
+
+        boolean isPdf = PDF_TYPE.equals(contentType) || fileName.endsWith(".pdf");
+        boolean isDocx = DOCX_TYPE.equals(contentType) || fileName.endsWith(".docx");
+
+        if (!isPdf && !isDocx) {
+            throw new ResumeParsingException(
+                    "Only PDF and DOCX files are accepted. Got content-type: " + contentType
+            );
         }
     }
 
@@ -96,8 +104,11 @@ public class ResumeService {
     }
 
     private String extractText(MultipartFile file, Path savedPath) {
+        String fileName = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase();
+        boolean isPdf = PDF_TYPE.equals(file.getContentType()) || fileName.endsWith(".pdf");
+
         try {
-            if (PDF_TYPE.equals(file.getContentType())) {
+            if (isPdf) {
                 try (PDDocument doc = Loader.loadPDF(savedPath.toFile())) {
                     return new PDFTextStripper().getText(doc);
                 }

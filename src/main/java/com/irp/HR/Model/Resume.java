@@ -39,7 +39,6 @@ public class Resume {
     @Column(name = "file_path", nullable = false, columnDefinition = "TEXT")
     private String filePath;
 
-    @Lob
     @Column(name = "extracted_skills", columnDefinition = "TEXT")
     private String extractedSkills; // comma-separated, filled in after Ollama parsing
 

@@ -1,0 +1,651 @@
+{
+  "info": {
+    "name": "IRP - Job Module",
+    "_postman_id": "irp-job-module-collection",
+    "description": "API tests for the Job Module — create, list, get, and lifecycle transitions (DRAFT → ACTIVE → CLOSED). Job postings now include a requiredSkills field (comma-separated, e.g. \"Java, Spring Boot, PostgreSQL\") used later by the Candidate Module's matching logic. Requires a valid JWT Bearer token for RECRUITER-only endpoints.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "<paste your JWT here>",
+      "type": "string"
+    },
+    {
+      "key": "jobId",
+      "value": "",
+      "type": "string",
+      "description": "Auto-populated after Create Job runs"
+    }
+  ],
+  "item": [
+    {
+      "name": "Job CRUD",
+      "item": [
+        {
+          "name": "Create Job (RECRUITER only)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201 Created', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Response has job id', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.id).to.be.a('string');",
+                  "    pm.collectionVariables.set('jobId', json.id);",
+                  "    console.log('Saved jobId:', json.id);",
+                  "});",
+                  "",
+                  "pm.test('Job starts in DRAFT status', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('DRAFT');",
+                  "});",
+                  "",
+                  "pm.test('Title and description match request', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.title).to.eql('Senior Backend Engineer');",
+                  "    pm.expect(json.description).to.be.a('string').and.have.length.above(19);",
+                  "});",
+                  "",
+                  "pm.test('requiredSkills matches request', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.requiredSkills).to.eql('Java, Spring Boot, PostgreSQL, REST APIs');",
+                  "});",
+                  "",
+                  "pm.test('createdAt is present', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.createdAt).to.be.a('string');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Senior Backend Engineer\",\n  \"description\": \"We are looking for a Senior Backend Engineer with expertise in Java Spring Boot and microservices architecture. You will design, build and maintain efficient, reusable, and reliable code.\",\n  \"requiredSkills\": \"Java, Spring Boot, PostgreSQL, REST APIs\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/jobs",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs"]
+            }
+          }
+        },
+        {
+          "name": "Get Job by ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Returned job id matches', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.id).to.eql(pm.collectionVariables.get('jobId'));",
+                  "});",
+                  "",
+                  "pm.test('Job has required fields', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.have.all.keys('id', 'title', 'description', 'requiredSkills', 'status', 'createdAt');",
+                  "});",
+                  "",
+                  "pm.test('requiredSkills is a non-empty string', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.requiredSkills).to.be.a('string').and.have.length.above(0);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{jobId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs", "{{jobId}}"]
+            }
+          }
+        },
+        {
+          "name": "List All Jobs (no filter)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response is a Page object', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('content');",
+                  "    pm.expect(json.content).to.be.an('array');",
+                  "    pm.expect(json).to.have.property('totalElements');",
+                  "    pm.expect(json).to.have.property('totalPages');",
+                  "});",
+                  "",
+                  "pm.test('Each job has required fields including requiredSkills', function () {",
+                  "    var jobs = pm.response.json().content;",
+                  "    if (jobs.length > 0) {",
+                  "        pm.expect(jobs[0]).to.have.all.keys('id', 'title', 'description', 'requiredSkills', 'status', 'createdAt');",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/jobs?page=0&size=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs"],
+              "query": [
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Jobs — Filter by ACTIVE",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('All returned jobs are ACTIVE', function () {",
+                  "    var jobs = pm.response.json().content;",
+                  "    jobs.forEach(function(job) {",
+                  "        pm.expect(job.status).to.eql('ACTIVE');",
+                  "    });",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/jobs?status=ACTIVE&page=0&size=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs"],
+              "query": [
+                { "key": "status", "value": "ACTIVE" },
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Jobs — Filter by DRAFT",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('All returned jobs are DRAFT', function () {",
+                  "    var jobs = pm.response.json().content;",
+                  "    jobs.forEach(function(job) {",
+                  "        pm.expect(job.status).to.eql('DRAFT');",
+                  "    });",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/jobs?status=DRAFT&page=0&size=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs"],
+              "query": [
+                { "key": "status", "value": "DRAFT" },
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "20" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Job Lifecycle (DRAFT → ACTIVE → CLOSED)",
+      "item": [
+        {
+          "name": "Transition DRAFT → ACTIVE",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Job status is now ACTIVE', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('ACTIVE');",
+                  "});",
+                  "",
+                  "pm.test('Job id is unchanged', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.id).to.eql(pm.collectionVariables.get('jobId'));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{jobId}}/status?status=ACTIVE",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs", "{{jobId}}", "status"],
+              "query": [
+                { "key": "status", "value": "ACTIVE" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Transition ACTIVE → CLOSED",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Job status is now CLOSED', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('CLOSED');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{jobId}}/status?status=CLOSED",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs", "{{jobId}}", "status"],
+              "query": [
+                { "key": "status", "value": "CLOSED" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error / Negative Cases",
+      "item": [
+        {
+          "name": "Create Job — Missing Title (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 Bad Request', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Validation error mentions title', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.message).to.eql('Validation failed');",
+                  "    pm.expect(json.fieldErrors).to.have.property('title');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"A valid description that is long enough to pass validation.\",\n  \"requiredSkills\": \"Java, Spring Boot\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/jobs",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs"]
+            }
+          }
+        },
+        {
+          "name": "Create Job — Description Too Short (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 Bad Request', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Validation error mentions description', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.fieldErrors).to.have.property('description');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Backend Dev\",\n  \"description\": \"Too short\",\n  \"requiredSkills\": \"Java, Spring Boot\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/jobs",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs"]
+            }
+          }
+        },
+        {
+          "name": "Create Job — Missing Required Skills (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 Bad Request', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Validation error mentions requiredSkills', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.fieldErrors).to.have.property('requiredSkills');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Backend Dev\",\n  \"description\": \"A valid and long enough description for this job posting.\",\n  \"requiredSkills\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/jobs",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs"]
+            }
+          }
+        },
+        {
+          "name": "Create Job — No Auth (401/403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401 or 403 (unauthenticated)', function () {",
+                  "    pm.expect([401, 403]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Senior Backend Engineer\",\n  \"description\": \"A valid and long enough description for this job posting.\",\n  \"requiredSkills\": \"Java, Spring Boot, PostgreSQL\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/jobs",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs"]
+            }
+          }
+        },
+        {
+          "name": "Get Job — Non-existent ID (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404 Not Found', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('Error body has message field', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('message');",
+                  "    pm.expect(json).to.have.property('status');",
+                  "    pm.expect(json.status).to.eql(404);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/00000000-0000-0000-0000-000000000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs", "00000000-0000-0000-0000-000000000000"]
+            }
+          }
+        },
+        {
+          "name": "Invalid Transition — DRAFT → CLOSED (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// This test only makes sense on a freshly created DRAFT job.",
+                  "// Run 'Create Job' first, then run this before any ACTIVE transition.",
+                  "pm.test('Status is 400 Bad Request', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Error message explains invalid transition', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.message).to.be.a('string').and.have.length.above(0);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{jobId}}/status?status=CLOSED",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs", "{{jobId}}", "status"],
+              "query": [
+                { "key": "status", "value": "CLOSED" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Invalid Transition — CLOSED → ACTIVE (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Run the full lifecycle first so the job is CLOSED, then run this.",
+                  "pm.test('Status is 400 Bad Request', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Error message explains invalid transition', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.message).to.be.a('string').and.have.length.above(0);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{jobId}}/status?status=ACTIVE",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs", "{{jobId}}", "status"],
+              "query": [
+                { "key": "status", "value": "ACTIVE" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Status — No Auth (401/403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401 or 403 (unauthenticated)', function () {",
+                  "    pm.expect([401, 403]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{jobId}}/status?status=ACTIVE",
+              "host": ["{{baseUrl}}"],
+              "path": ["jobs", "{{jobId}}", "status"],
+              "query": [
+                { "key": "status", "value": "ACTIVE" }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
