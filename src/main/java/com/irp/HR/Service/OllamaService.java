@@ -1,6 +1,7 @@
 package com.irp.HR.Service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.irp.HR.Dto.ParsedResumeData;
 import com.irp.HR.Exception.ResumeParsingException;
@@ -42,13 +43,20 @@ public class OllamaService {
 
     public ParsedResumeData extractSkills(String resumeText) {
         String prompt = """
-                You are a resume parser. Read the resume text below and extract
-                a list of technical and professional skills mentioned in it
-                (programming languages, frameworks, tools, methodologies).
+                You are a resume parser. Read the resume text below and extract:
+                1. A list of technical and professional skills mentioned in it
+                   (programming languages, frameworks, tools, methodologies).
+                2. The candidate's total years of professional work experience,
+                   as a whole number. Estimate from listed job durations /
+                   graduation date if not stated explicitly. If the resume gives
+                   genuinely no signal (e.g. it's blank or unreadable), use 0.
 
-                Respond with ONLY a JSON array of strings, nothing else - no
-                markdown, no explanation.
-                Example: ["Java", "Spring Boot", "PostgreSQL", "REST APIs"]
+                Respond with ONLY a raw JSON object, nothing else - no markdown,
+                no explanation, matching exactly this shape:
+                {
+                  "skills": ["Java", "Spring Boot", "PostgreSQL", "REST APIs"],
+                  "yearsOfExperience": 3
+                }
 
                 Resume text:
                 %s
@@ -77,14 +85,19 @@ public class OllamaService {
             throw new ResumeParsingException("Ollama returned an empty response while parsing the resume.");
         }
 
-        String rawSkillsJson = stripCodeFences(response.get("response").toString());
+        String rawJson = stripCodeFences(response.get("response").toString());
 
         try {
-            List<String> skills = objectMapper.readValue(rawSkillsJson, new TypeReference<List<String>>() {});
-            return new ParsedResumeData(skills);
+            JsonNode root = objectMapper.readTree(rawJson);
+            List<String> skills = objectMapper.convertValue(
+                    root.path("skills"), new TypeReference<List<String>>() {});
+            Integer yearsOfExperience = root.path("yearsOfExperience").isInt()
+                    ? root.path("yearsOfExperience").asInt()
+                    : null;
+            return new ParsedResumeData(skills, yearsOfExperience);
         } catch (Exception e) {
             throw new ResumeParsingException(
-                    "Ollama's response wasn't a valid JSON array of skills. Got: " + rawSkillsJson
+                    "Ollama's response wasn't valid JSON in the expected shape. Got: " + rawJson
             );
         }
     }
