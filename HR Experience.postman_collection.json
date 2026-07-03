@@ -1,139 +1,386 @@
 {
   "info": {
-    "_postman_id": "a1e4b8f0-2c3d-4e5f-9a1b-resume-experience",
-    "name": "IRP - Resume & Experience Extraction",
-    "description": "Endpoints for uploading a candidate resume, triggering Ollama-based skill + years-of-experience extraction, and reading back parsed resumes.\n\nAll requests use {{baseUrl}} and, if your ResumeController sits behind the JWT filter, {{token}}. Set candidateId in the environment before running.",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    "name": "IRP - Resume Upload & Experience Extraction",
+    "_postman_id": "e4ae3a79-1a7c-4962-9e23-b8f569b3cbf7",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Resume upload, skill + years-of-experience extraction (OllamaService), and the endpoints AssessmentService reads from to pick difficulty. Run 'Setup' first, then 'Happy Path', then 'Negative Cases'."
   },
-  "auth": {
-    "type": "bearer",
-    "bearer": [
-      { "key": "token", "value": "{{token}}", "type": "string" }
-    ]
-  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "candidateEmail",
+      "value": "candidate1@irp.test"
+    },
+    {
+      "key": "candidatePassword",
+      "value": "Password123!"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "candidateId",
+      "value": ""
+    },
+    {
+      "key": "resumeId",
+      "value": ""
+    }
+  ],
   "item": [
     {
-      "name": "Upload Resume (multipart) — triggers skill + experience extraction",
-      "request": {
-        "method": "POST",
-        "header": [],
-        "body": {
-          "mode": "formdata",
-          "formdata": [
-            {
-              "key": "candidateId",
-              "value": "{{candidateId}}",
-              "type": "text"
+      "name": "Setup",
+      "item": [
+        {
+          "name": "Register Candidate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "register"
+              ]
             },
+            "description": "One-time. If the email already exists this returns 400 - that's fine, just move on to Login.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Candidate\",\n  \"email\": \"{{candidateEmail}}\",\n  \"password\": \"{{candidatePassword}}\",\n  \"roleName\": \"CANDIDATE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
             {
-              "key": "file",
-              "type": "file",
-              "src": []
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200 or 400 (already exists)\", () => {",
+                  "    pm.expect([200, 400]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
             }
           ]
         },
-        "url": {
-          "raw": "{{baseUrl}}/resumes",
-          "host": ["{{baseUrl}}"],
-          "path": ["resumes"]
-        },
-        "description": "candidateId is a query param (@RequestParam UUID candidateId) and file is a multipart field named 'file'. Response is a ResumeUploadResponse with resumeId, extractedSkills, and yearsOfExperience (null if Ollama couldn't determine it).\n\nBefore sending: pick a PDF/DOCX under 10MB in the file field, and set candidateId in the environment.\n\nA test script below auto-saves resumeId into the environment for the next requests."
-      },
-      "event": [
         {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test('Status is 201 Created', function () {",
-              "    pm.response.to.have.status(201);",
-              "});",
-              "",
-              "const jsonData = pm.response.json();",
-              "",
-              "pm.test('Response has resumeId', function () {",
-              "    pm.expect(jsonData.resumeId).to.exist;",
-              "});",
-              "",
-              "if (jsonData.resumeId) {",
-              "    pm.environment.set('resumeId', jsonData.resumeId);",
-              "}",
-              "",
-              "pm.test('yearsOfExperience is a number or null', function () {",
-              "    pm.expect(jsonData.yearsOfExperience === null || typeof jsonData.yearsOfExperience === 'number').to.be.true;",
-              "});"
+          "name": "Login Candidate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "type": "text/javascript"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{candidateEmail}}\",\n  \"password\": \"{{candidatePassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set(\"token\", json.token);",
+                  "pm.collectionVariables.set(\"candidateId\", json.userId);",
+                  "pm.test(\"Token present\", () => pm.expect(json.token).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
         }
-      ],
-      "response": []
-    }
-  ,
-    {
-      "name": "Get Resume by ID",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/resumes/{{resumeId}}",
-          "host": ["{{baseUrl}}"],
-          "path": ["resumes", "{{resumeId}}"]
-        },
-        "description": "Returns the ResumeUploadResponse for a single resume, including extractedSkills and yearsOfExperience."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test('Status is 200 OK', function () {",
-              "    pm.response.to.have.status(200);",
-              "});",
-              "",
-              "pm.test('resumeId matches requested resume', function () {",
-              "    const jsonData = pm.response.json();",
-              "    pm.expect(jsonData.resumeId).to.eql(pm.environment.get('resumeId'));",
-              "});"
-            ],
-            "type": "text/javascript"
-          }
-        }
-      ],
-      "response": []
+      ]
     },
     {
-      "name": "List Resumes by Candidate",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/resumes?candidateId={{candidateId}}",
-          "host": ["{{baseUrl}}"],
-          "path": ["resumes"],
-          "query": [
-            { "key": "candidateId", "value": "{{candidateId}}" }
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "Upload Resume",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/resumes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resumes"
+              ]
+            },
+            "description": "Attach a real PDF or DOCX resume file in the 'file' field before sending - Postman won't send one for you. Body is multipart/form-data even though this endpoint is currently permitAll (no auth header required).",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "candidateId",
+                  "value": "{{candidateId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set(\"resumeId\", json.resumeId);",
+                  "pm.test(\"extractedSkills present\", () => pm.expect(json.extractedSkills).to.exist);",
+                  "pm.test(\"yearsOfExperience field present (may be null)\", () => pm.expect(json).to.have.property(\"yearsOfExperience\"));"
+                ]
+              }
+            }
           ]
         },
-        "description": "Returns all resumes for the given candidate, most recent upload included. Useful to sanity-check which resume the assessment module will treat as 'latest' when it resolves difficulty."
-      },
-      "event": [
         {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test('Status is 200 OK', function () {",
-              "    pm.response.to.have.status(200);",
-              "});",
-              "",
-              "pm.test('Response is an array', function () {",
-              "    pm.expect(pm.response.json()).to.be.an('array');",
-              "});"
-            ],
-            "type": "text/javascript"
-          }
+          "name": "Get Resume By Id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/resumes/{{resumeId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resumes",
+                "{{resumeId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"yearsOfExperience field present\", () => pm.expect(json).to.have.property(\"yearsOfExperience\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Resumes By Candidate",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/resumes?candidateId={{candidateId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resumes"
+              ],
+              "query": [
+                {
+                  "key": "candidateId",
+                  "value": "{{candidateId}}"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Returns an array\", () => pm.expect(json).to.be.an(\"array\"));",
+                  "pm.test(\"Each item has yearsOfExperience field\", () => {",
+                  "    json.forEach(r => pm.expect(r).to.have.property(\"yearsOfExperience\"));",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
-      ],
-      "response": []
+      ]
+    },
+    {
+      "name": "Negative Cases",
+      "item": [
+        {
+          "name": "Upload Resume - Wrong File Type",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/resumes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resumes"
+              ]
+            },
+            "description": "Attach a .txt or .png file to trigger the PDF/DOCX content-type check in ResumeService.validateFile().",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "candidateId",
+                  "value": "{{candidateId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 400\", () => pm.response.to.have.status(400));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Error mentions PDF/DOCX\", () => pm.expect(json.message).to.match(/PDF|DOCX/i));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Resume - Missing File",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/resumes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resumes"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "candidateId",
+                  "value": "{{candidateId}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Resume - Not Found",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/resumes/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resumes",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 404\", () => pm.response.to.have.status(404));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Error mentions not found\", () => pm.expect(json.message).to.match(/not found/i));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ]
 }

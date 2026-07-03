@@ -1,239 +1,1342 @@
 {
   "info": {
-    "_postman_id": "c7f2a9d1-4b6e-4f0a-8c3d-assessment-module",
     "name": "IRP - Assessment Module",
-    "description": "Generate → start → submit flow for candidate skill assessments. Difficulty is resolved server-side from the candidate's latest resume (yearsOfExperience): <2 EASY, 2-5 MEDIUM, >5 HARD, no resume on file defaults to EASY.\n\nAll requests require a bearer token (candidateId is taken from the JWT principal, never from the request body).",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    "_postman_id": "f6840284-ea4b-4eae-800f-74328840826c",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Full lifecycle: recruiter creates+activates a job, candidate uploads a resume (drives difficulty), generates a 20-Q assessment, starts it, submits it, and fetches the result. Includes cooldown, ownership, and invalid-state negative cases. Run folders top to bottom - later requests depend on variables set by earlier ones."
   },
-  "auth": {
-    "type": "bearer",
-    "bearer": [
-      { "key": "token", "value": "{{token}}", "type": "string" }
-    ]
-  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "recruiterEmail",
+      "value": "recruiter1@irp.test"
+    },
+    {
+      "key": "recruiterPassword",
+      "value": "Password123!"
+    },
+    {
+      "key": "recruiterToken",
+      "value": ""
+    },
+    {
+      "key": "candidateEmail",
+      "value": "candidate1@irp.test"
+    },
+    {
+      "key": "candidatePassword",
+      "value": "Password123!"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "candidateId",
+      "value": ""
+    },
+    {
+      "key": "candidate2Email",
+      "value": "candidate2@irp.test"
+    },
+    {
+      "key": "candidate2Password",
+      "value": "Password123!"
+    },
+    {
+      "key": "candidate2Token",
+      "value": ""
+    },
+    {
+      "key": "jobId",
+      "value": ""
+    },
+    {
+      "key": "assessmentId",
+      "value": ""
+    },
+    {
+      "key": "assessmentId2",
+      "value": ""
+    },
+    {
+      "key": "answersJson",
+      "value": "[]"
+    }
+  ],
   "item": [
     {
-      "name": "1. Generate Assessment",
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"jobId\": \"{{jobId}}\"\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/assessments/generate",
-          "host": ["{{baseUrl}}"],
-          "path": ["assessments", "generate"]
-        },
-        "description": "candidateId comes from the JWT (AuthenticationPrincipal), only jobId is in the body. Difficulty is resolved from the candidate's most recent resume's yearsOfExperience.\n\nWill throw a cooldown error (check GLOBAL_EXCEPTION_HANDLER_ADDITIONS mapping) if this candidate already generated an assessment for this job within the configured cooldown window (default 30 days).\n\nRun the resume upload request first if you want to test a specific difficulty tier."
-      },
-      "event": [
+      "name": "1. Setup (job + candidate + resume)",
+      "item": [
         {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test('Status is 200 OK', function () {",
-              "    pm.response.to.have.status(200);",
-              "});",
-              "",
-              "const jsonData = pm.response.json();",
-              "",
-              "pm.test('Response has assessmentId and questions', function () {",
-              "    pm.expect(jsonData.assessmentId).to.exist;",
-              "    pm.expect(jsonData.questions).to.be.an('array');",
-              "});",
-              "",
-              "if (jsonData.assessmentId) {",
-              "    pm.environment.set('assessmentId', jsonData.assessmentId);",
-              "}",
-              "",
-              "if (jsonData.questions && jsonData.questions.length > 0) {",
-              "    pm.environment.set('questionId1', jsonData.questions[0].id);",
-              "    if (jsonData.questions.length > 1) {",
-              "        pm.environment.set('questionId2', jsonData.questions[1].id);",
-              "    }",
-              "}",
-              "",
-              "pm.test('difficultyLevel is one of EASY/MEDIUM/HARD', function () {",
-              "    pm.expect(['EASY', 'MEDIUM', 'HARD']).to.include(jsonData.difficultyLevel);",
-              "});"
+          "name": "Register Recruiter",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "type": "text/javascript"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "register"
+              ]
+            },
+            "description": "If already registered this 400s - fine, continue to Login.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Recruiter\",\n  \"email\": \"{{recruiterEmail}}\",\n  \"password\": \"{{recruiterPassword}}\",\n  \"roleName\": \"RECRUITER\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200 or 400\", () => pm.expect([200, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Recruiter",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{recruiterEmail}}\",\n  \"password\": \"{{recruiterPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set(\"recruiterToken\", json.token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Job",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recruiterToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Backend Engineer - Java/Spring\",\n  \"description\": \"We are hiring a backend engineer to build REST APIs with Java, Spring Boot, PostgreSQL, and JWT-based auth. You will own the resume parsing and matching pipeline.\",\n  \"requiredSkills\": \"Java, Spring Boot, PostgreSQL, REST APIs\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set(\"jobId\", json.id);",
+                  "pm.test(\"Job is DRAFT\", () => pm.expect(json.status).to.eql(\"DRAFT\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Activate Job",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recruiterToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{jobId}}/status?status=ACTIVE",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs",
+                "{{jobId}}",
+                "status"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "ACTIVE"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Job is ACTIVE\", () => pm.expect(json.status).to.eql(\"ACTIVE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register Candidate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "register"
+              ]
+            },
+            "description": "If already registered this 400s - fine, continue to Login.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Candidate\",\n  \"email\": \"{{candidateEmail}}\",\n  \"password\": \"{{candidatePassword}}\",\n  \"roleName\": \"CANDIDATE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200 or 400\", () => pm.expect([200, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Candidate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{candidateEmail}}\",\n  \"password\": \"{{candidatePassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set(\"token\", json.token);",
+                  "pm.collectionVariables.set(\"candidateId\", json.userId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Resume (drives difficulty)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/resumes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resumes"
+              ]
+            },
+            "description": "Attach a real PDF/DOCX before sending. The years-of-experience Ollama extracts from THIS file decides EASY/MEDIUM/HARD when you generate the assessment below.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "candidateId",
+                  "value": "{{candidateId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"yearsOfExperience present\", () => pm.expect(json).to.have.property(\"yearsOfExperience\"));",
+                  "console.log(\"Extracted years of experience:\", json.yearsOfExperience);"
+                ]
+              }
+            }
+          ]
         }
-      ],
-      "response": []
+      ]
     },
     {
-      "name": "2. Start Assessment",
-      "request": {
-        "method": "POST",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/assessments/{{assessmentId}}/start",
-          "host": ["{{baseUrl}}"],
-          "path": ["assessments", "{{assessmentId}}", "start"]
-        },
-        "description": "Flips status GENERATED -> IN_PROGRESS and opens the start window (default 48h) within which the candidate must submit."
-      },
-      "event": [
+      "name": "2. Assessment Flow (happy path)",
+      "item": [
         {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test('Status is 200 OK', function () {",
-              "    pm.response.to.have.status(200);",
-              "});",
-              "",
-              "pm.test('status is IN_PROGRESS', function () {",
-              "    pm.expect(pm.response.json().status).to.eql('IN_PROGRESS');",
-              "});"
+          "name": "Generate Assessment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "type": "text/javascript"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/assessments/generate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assessments",
+                "generate"
+              ]
+            },
+            "description": "Can take a while - this is a live Ollama call generating 20 questions. Difficulty is picked from the resume uploaded in Setup.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jobId\": \"{{jobId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set(\"assessmentId\", json.assessmentId);",
+                  "pm.test(\"Returns exactly 20 questions\", () => pm.expect(json.questions.length).to.eql(20));",
+                  "pm.test(\"Status is GENERATED\", () => pm.expect(json.status).to.eql(\"GENERATED\"));",
+                  "pm.test(\"No correctOption leaked to client\", () => {",
+                  "    json.questions.forEach(q => pm.expect(q).to.not.have.property(\"correctOption\"));",
+                  "});",
+                  "const answers = json.questions.map(q => ({ questionId: q.id, selectedOption: \"A\" }));",
+                  "pm.collectionVariables.set(\"answersJson\", JSON.stringify(answers));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Start Assessment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/assessments/{{assessmentId}}/start",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assessments",
+                "{{assessmentId}}",
+                "start"
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Status is IN_PROGRESS\", () => pm.expect(json.status).to.eql(\"IN_PROGRESS\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submit Assessment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/assessments/submit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assessments",
+                "submit"
+              ]
+            },
+            "description": "answersJson was captured from the Generate step's question ids (all answered 'A' - this is just to exercise scoring end to end, not to hit a target score).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assessmentId\": \"{{assessmentId}}\",\n  \"answers\": {{answersJson}},\n  \"tabSwitchCount\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Status is COMPLETED\", () => pm.expect(json.status).to.eql(\"COMPLETED\"));",
+                  "pm.test(\"Score is between 0 and 100\", () => {",
+                  "    pm.expect(json.score).to.be.at.least(0);",
+                  "    pm.expect(json.score).to.be.at.most(100);",
+                  "});",
+                  "pm.test(\"flaggedForCheating is false (tabSwitchCount 0)\", () => pm.expect(json.flaggedForCheating).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Assessment (after submit)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/assessments/{{assessmentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assessments",
+                "{{assessmentId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Status is COMPLETED\", () => pm.expect(json.status).to.eql(\"COMPLETED\"));",
+                  "pm.test(\"Still no correctOption leaked\", () => {",
+                  "    json.questions.forEach(q => pm.expect(q).to.not.have.property(\"correctOption\"));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Review Assessment (correct vs selected)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/assessments/{{assessmentId}}/review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assessments",
+                "{{assessmentId}}",
+                "review"
+              ]
+            },
+            "description": "Only works once status is COMPLETED. Shows correctOption + selectedOption + isCorrect per question."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Returns 20 reviewed questions\", () => pm.expect(json.questions.length).to.eql(20));",
+                  "pm.test(\"Every question has correctOption now\", () => {",
+                  "    json.questions.forEach(q => pm.expect(q.correctOption).to.match(/^[ABCD]$/));",
+                  "});",
+                  "pm.test(\"Every question has isCorrect boolean\", () => {",
+                  "    json.questions.forEach(q => pm.expect(q.isCorrect).to.be.a(\"boolean\"));",
+                  "});",
+                  "pm.test(\"Score matches count of isCorrect=true\", () => {",
+                  "    const correct = json.questions.filter(q => q.isCorrect).length;",
+                  "    pm.expect(correct).to.eql(json.correctCount);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Recruiter - View All Candidates for Job",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recruiterToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{jobId}}/assessments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs",
+                "{{jobId}}",
+                "assessments"
+              ]
+            },
+            "description": "No filters - every attempt (any status) for this job, sorted by score desc."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Returns an array\", () => pm.expect(json).to.be.an(\"array\"));",
+                  "pm.test(\"Includes our candidate's attempt\", () => {",
+                  "    pm.expect(json.some(a => a.assessmentId === pm.collectionVariables.get(\"assessmentId\"))).to.be.true;",
+                  "});",
+                  "pm.test(\"Each row has candidate name/email\", () => {",
+                  "    json.forEach(a => {",
+                  "        pm.expect(a.candidateName).to.exist;",
+                  "        pm.expect(a.candidateEmail).to.exist;",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Recruiter - Filter by Status + Min Score",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recruiterToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{jobId}}/assessments?status=COMPLETED&minScore=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs",
+                "{{jobId}}",
+                "assessments"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "COMPLETED"
+                },
+                {
+                  "key": "minScore",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"All rows are COMPLETED\", () => {",
+                  "    json.forEach(a => pm.expect(a.status).to.eql(\"COMPLETED\"));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Recruiter - Filter by Flagged",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recruiterToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{jobId}}/assessments?flagged=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs",
+                "{{jobId}}",
+                "assessments"
+              ],
+              "query": [
+                {
+                  "key": "flagged",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "Should come back empty unless a candidate racked up 3+ tab switches (assessment.tab-switch-flag-threshold)."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"All returned rows are flagged\", () => {",
+                  "    json.forEach(a => pm.expect(a.flaggedForCheating).to.eql(true));",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
-      ],
-      "response": []
+      ]
     },
     {
-      "name": "3. Get Assessment",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/assessments/{{assessmentId}}",
-          "host": ["{{baseUrl}}"],
-          "path": ["assessments", "{{assessmentId}}"]
-        },
-        "description": "Fetch current assessment state — useful to re-check questions/status without generating a new attempt."
-      },
-      "event": [
+      "name": "3. Negative Cases",
+      "item": [
         {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test('Status is 200 OK', function () {",
-              "    pm.response.to.have.status(200);",
-              "});"
+          "name": "Generate Assessment - No Auth Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "type": "text/javascript"
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "4. Submit Assessment",
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"assessmentId\": \"{{assessmentId}}\",\n  \"answers\": [\n    {\n      \"questionId\": \"{{questionId1}}\",\n      \"selectedOption\": \"A\"\n    },\n    {\n      \"questionId\": \"{{questionId2}}\",\n      \"selectedOption\": \"B\"\n    }\n  ],\n  \"tabSwitchCount\": 0\n}"
+            "url": {
+              "raw": "{{baseUrl}}/assessments/generate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assessments",
+                "generate"
+              ]
+            },
+            "description": "Deliberately omits the Authorization header.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jobId\": \"{{jobId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 401 or 403\", () => pm.expect([401, 403]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
         },
-        "url": {
-          "raw": "{{baseUrl}}/assessments/submit",
-          "host": ["{{baseUrl}}"],
-          "path": ["assessments", "submit"]
-        },
-        "description": "selectedOption must be one of A/B/C/D (validated by @Pattern). This sample body only fills in 2 of the 20 questions the real assessment generates — add the remaining questionId/selectedOption pairs from the 'Generate Assessment' response before running a full test, or extend the answers array manually.\n\ntabSwitchCount is reported by the frontend anti-cheat tracker; values >= the configured threshold (default 3) flag the attempt as flaggedForCheating in the result."
-      },
-      "event": [
         {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test('Status is 200 OK', function () {",
-              "    pm.response.to.have.status(200);",
-              "});",
-              "",
-              "const jsonData = pm.response.json();",
-              "",
-              "pm.test('Result has score and status COMPLETED', function () {",
-              "    pm.expect(jsonData.score).to.be.a('number');",
-              "    pm.expect(jsonData.status).to.eql('COMPLETED');",
-              "});",
-              "",
-              "pm.test('flaggedForCheating matches tabSwitchCount logic', function () {",
-              "    pm.expect(jsonData.flaggedForCheating).to.be.a('boolean');",
-              "});"
+          "name": "Generate Assessment - Cooldown Active",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "type": "text/javascript"
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "Negative: Submit with invalid selectedOption",
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"assessmentId\": \"{{assessmentId}}\",\n  \"answers\": [\n    {\n      \"questionId\": \"{{questionId1}}\",\n      \"selectedOption\": \"Z\"\n    }\n  ],\n  \"tabSwitchCount\": 0\n}"
+            "url": {
+              "raw": "{{baseUrl}}/assessments/generate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assessments",
+                "generate"
+              ]
+            },
+            "description": "Run this right after '2. Assessment Flow' completes - same candidate + same job within the 30-day cooldown window.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jobId\": \"{{jobId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 409\", () => pm.response.to.have.status(409));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Message mentions cooldown\", () => pm.expect(json.message).to.match(/already attempted|cooldown|next eligible/i));"
+                ]
+              }
+            }
+          ]
         },
-        "url": {
-          "raw": "{{baseUrl}}/assessments/submit",
-          "host": ["{{baseUrl}}"],
-          "path": ["assessments", "submit"]
-        },
-        "description": "selectedOption 'Z' fails the @Pattern(^[ABCD]$) validation on SubmitAnswerDTO. Expect a 400 with a validation error body (shape depends on your GlobalExceptionHandler)."
-      },
-      "event": [
         {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test('Status is 400 Bad Request', function () {",
-              "    pm.response.to.have.status(400);",
-              "});"
+          "name": "Submit Without Starting",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "type": "text/javascript"
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "Negative: Generate during cooldown",
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"jobId\": \"{{jobId}}\"\n}"
+            "url": {
+              "raw": "{{baseUrl}}/assessments/submit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assessments",
+                "submit"
+              ]
+            },
+            "description": "Requires a second GENERATED (not started) assessment for a different job in {{assessmentId2}} - generate one for another job id first, skip Start, then run this.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assessmentId\": \"{{assessmentId2}}\",\n  \"answers\": [{ \"questionId\": \"00000000-0000-0000-0000-000000000000\", \"selectedOption\": \"A\" }],\n  \"tabSwitchCount\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 400\", () => pm.response.to.have.status(400));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Message explains invalid state\", () => pm.expect(json.message).to.match(/cannot be submitted|status/i));"
+                ]
+              }
+            }
+          ]
         },
-        "url": {
-          "raw": "{{baseUrl}}/assessments/generate",
-          "host": ["{{baseUrl}}"],
-          "path": ["assessments", "generate"]
-        },
-        "description": "Re-run request #1 (same candidate + jobId) immediately after a successful generate. Expect a CooldownActiveException to be thrown and mapped to an error response — check the status code your GlobalExceptionHandler assigns it in GLOBAL_EXCEPTION_HANDLER_ADDITIONS.java."
-      },
-      "event": [
         {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test('Cooldown blocks regeneration (not 200)', function () {",
-              "    pm.expect(pm.response.code).to.not.eql(200);",
-              "});"
+          "name": "Get Assessment - Not Found",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
             ],
-            "type": "text/javascript"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/assessments/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assessments",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register Second Candidate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "register"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Candidate 2\",\n  \"email\": \"{{candidate2Email}}\",\n  \"password\": \"{{candidate2Password}}\",\n  \"roleName\": \"CANDIDATE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200 or 400\", () => pm.expect([200, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Second Candidate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{candidate2Email}}\",\n  \"password\": \"{{candidate2Password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set(\"candidate2Token\", json.token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Assessment - Wrong Candidate (403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{candidate2Token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/assessments/{{assessmentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assessments",
+                "{{assessmentId}}"
+              ]
+            },
+            "description": "Candidate 2 trying to read Candidate 1's assessment from the flow above."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submit Assessment - Invalid selectedOption",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/assessments/submit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assessments",
+                "submit"
+              ]
+            },
+            "description": "'Z' fails the @Pattern(A|B|C|D) validation on SubmitAnswerDTO.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assessmentId\": \"{{assessmentId}}\",\n  \"answers\": [\n    {\n      \"questionId\": \"00000000-0000-0000-0000-000000000000\",\n      \"selectedOption\": \"Z\"\n    }\n  ],\n  \"tabSwitchCount\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Review Assessment - Before Completion",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/assessments/generate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assessments",
+                "generate"
+              ]
+            },
+            "description": "Generates a fresh assessment for a NEW job (create one via Setup first and put its id here, or reuse jobId if cooldown has not blocked it) purely to get a non-COMPLETED assessmentId, then call review on it below expecting 400. Adjust jobId if you hit the cooldown 409 instead.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jobId\": \"{{jobId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set(\"assessmentId2\", pm.response.json().assessmentId);",
+                  "}",
+                  "pm.test(\"Status is 200 or 409 (cooldown)\", () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Review Assessment - Status Not COMPLETED (400)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/assessments/{{assessmentId2}}/review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assessments",
+                "{{assessmentId2}}",
+                "review"
+              ]
+            },
+            "description": "The assessment above is still GENERATED, never started/submitted."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 400\", () => pm.response.to.have.status(400));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Message mentions review availability\", () => pm.expect(json.message).to.match(/review is only available|status/i));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Review Assessment - Wrong Candidate (403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{candidate2Token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/assessments/{{assessmentId}}/review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assessments",
+                "{{assessmentId}}",
+                "review"
+              ]
+            },
+            "description": "Candidate 2 trying to review Candidate 1's completed assessment."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Recruiter Endpoint - Candidate Forbidden (403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{jobId}}/assessments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs",
+                "{{jobId}}",
+                "assessments"
+              ]
+            },
+            "description": "A CANDIDATE token hitting the RECRUITER-only results endpoint."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
         }
-      ],
-      "response": []
+      ]
     }
   ]
 }
