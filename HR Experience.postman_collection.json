@@ -1,0 +1,139 @@
+{
+  "info": {
+    "_postman_id": "a1e4b8f0-2c3d-4e5f-9a1b-resume-experience",
+    "name": "IRP - Resume & Experience Extraction",
+    "description": "Endpoints for uploading a candidate resume, triggering Ollama-based skill + years-of-experience extraction, and reading back parsed resumes.\n\nAll requests use {{baseUrl}} and, if your ResumeController sits behind the JWT filter, {{token}}. Set candidateId in the environment before running.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{token}}", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "Upload Resume (multipart) — triggers skill + experience extraction",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "candidateId",
+              "value": "{{candidateId}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": []
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/resumes",
+          "host": ["{{baseUrl}}"],
+          "path": ["resumes"]
+        },
+        "description": "candidateId is a query param (@RequestParam UUID candidateId) and file is a multipart field named 'file'. Response is a ResumeUploadResponse with resumeId, extractedSkills, and yearsOfExperience (null if Ollama couldn't determine it).\n\nBefore sending: pick a PDF/DOCX under 10MB in the file field, and set candidateId in the environment.\n\nA test script below auto-saves resumeId into the environment for the next requests."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 201 Created', function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "",
+              "const jsonData = pm.response.json();",
+              "",
+              "pm.test('Response has resumeId', function () {",
+              "    pm.expect(jsonData.resumeId).to.exist;",
+              "});",
+              "",
+              "if (jsonData.resumeId) {",
+              "    pm.environment.set('resumeId', jsonData.resumeId);",
+              "}",
+              "",
+              "pm.test('yearsOfExperience is a number or null', function () {",
+              "    pm.expect(jsonData.yearsOfExperience === null || typeof jsonData.yearsOfExperience === 'number').to.be.true;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    }
+  ,
+    {
+      "name": "Get Resume by ID",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/resumes/{{resumeId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["resumes", "{{resumeId}}"]
+        },
+        "description": "Returns the ResumeUploadResponse for a single resume, including extractedSkills and yearsOfExperience."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('resumeId matches requested resume', function () {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.resumeId).to.eql(pm.environment.get('resumeId'));",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "List Resumes by Candidate",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/resumes?candidateId={{candidateId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["resumes"],
+          "query": [
+            { "key": "candidateId", "value": "{{candidateId}}" }
+          ]
+        },
+        "description": "Returns all resumes for the given candidate, most recent upload included. Useful to sanity-check which resume the assessment module will treat as 'latest' when it resolves difficulty."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Response is an array', function () {",
+              "    pm.expect(pm.response.json()).to.be.an('array');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    }
+  ]
+}

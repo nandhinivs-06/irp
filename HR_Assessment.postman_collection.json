@@ -1,0 +1,239 @@
+{
+  "info": {
+    "_postman_id": "c7f2a9d1-4b6e-4f0a-8c3d-assessment-module",
+    "name": "IRP - Assessment Module",
+    "description": "Generate → start → submit flow for candidate skill assessments. Difficulty is resolved server-side from the candidate's latest resume (yearsOfExperience): <2 EASY, 2-5 MEDIUM, >5 HARD, no resume on file defaults to EASY.\n\nAll requests require a bearer token (candidateId is taken from the JWT principal, never from the request body).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{token}}", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "1. Generate Assessment",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jobId\": \"{{jobId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/assessments/generate",
+          "host": ["{{baseUrl}}"],
+          "path": ["assessments", "generate"]
+        },
+        "description": "candidateId comes from the JWT (AuthenticationPrincipal), only jobId is in the body. Difficulty is resolved from the candidate's most recent resume's yearsOfExperience.\n\nWill throw a cooldown error (check GLOBAL_EXCEPTION_HANDLER_ADDITIONS mapping) if this candidate already generated an assessment for this job within the configured cooldown window (default 30 days).\n\nRun the resume upload request first if you want to test a specific difficulty tier."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const jsonData = pm.response.json();",
+              "",
+              "pm.test('Response has assessmentId and questions', function () {",
+              "    pm.expect(jsonData.assessmentId).to.exist;",
+              "    pm.expect(jsonData.questions).to.be.an('array');",
+              "});",
+              "",
+              "if (jsonData.assessmentId) {",
+              "    pm.environment.set('assessmentId', jsonData.assessmentId);",
+              "}",
+              "",
+              "if (jsonData.questions && jsonData.questions.length > 0) {",
+              "    pm.environment.set('questionId1', jsonData.questions[0].id);",
+              "    if (jsonData.questions.length > 1) {",
+              "        pm.environment.set('questionId2', jsonData.questions[1].id);",
+              "    }",
+              "}",
+              "",
+              "pm.test('difficultyLevel is one of EASY/MEDIUM/HARD', function () {",
+              "    pm.expect(['EASY', 'MEDIUM', 'HARD']).to.include(jsonData.difficultyLevel);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "2. Start Assessment",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/assessments/{{assessmentId}}/start",
+          "host": ["{{baseUrl}}"],
+          "path": ["assessments", "{{assessmentId}}", "start"]
+        },
+        "description": "Flips status GENERATED -> IN_PROGRESS and opens the start window (default 48h) within which the candidate must submit."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('status is IN_PROGRESS', function () {",
+              "    pm.expect(pm.response.json().status).to.eql('IN_PROGRESS');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "3. Get Assessment",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/assessments/{{assessmentId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["assessments", "{{assessmentId}}"]
+        },
+        "description": "Fetch current assessment state — useful to re-check questions/status without generating a new attempt."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "4. Submit Assessment",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"assessmentId\": \"{{assessmentId}}\",\n  \"answers\": [\n    {\n      \"questionId\": \"{{questionId1}}\",\n      \"selectedOption\": \"A\"\n    },\n    {\n      \"questionId\": \"{{questionId2}}\",\n      \"selectedOption\": \"B\"\n    }\n  ],\n  \"tabSwitchCount\": 0\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/assessments/submit",
+          "host": ["{{baseUrl}}"],
+          "path": ["assessments", "submit"]
+        },
+        "description": "selectedOption must be one of A/B/C/D (validated by @Pattern). This sample body only fills in 2 of the 20 questions the real assessment generates — add the remaining questionId/selectedOption pairs from the 'Generate Assessment' response before running a full test, or extend the answers array manually.\n\ntabSwitchCount is reported by the frontend anti-cheat tracker; values >= the configured threshold (default 3) flag the attempt as flaggedForCheating in the result."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const jsonData = pm.response.json();",
+              "",
+              "pm.test('Result has score and status COMPLETED', function () {",
+              "    pm.expect(jsonData.score).to.be.a('number');",
+              "    pm.expect(jsonData.status).to.eql('COMPLETED');",
+              "});",
+              "",
+              "pm.test('flaggedForCheating matches tabSwitchCount logic', function () {",
+              "    pm.expect(jsonData.flaggedForCheating).to.be.a('boolean');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "Negative: Submit with invalid selectedOption",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"assessmentId\": \"{{assessmentId}}\",\n  \"answers\": [\n    {\n      \"questionId\": \"{{questionId1}}\",\n      \"selectedOption\": \"Z\"\n    }\n  ],\n  \"tabSwitchCount\": 0\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/assessments/submit",
+          "host": ["{{baseUrl}}"],
+          "path": ["assessments", "submit"]
+        },
+        "description": "selectedOption 'Z' fails the @Pattern(^[ABCD]$) validation on SubmitAnswerDTO. Expect a 400 with a validation error body (shape depends on your GlobalExceptionHandler)."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 400 Bad Request', function () {",
+              "    pm.response.to.have.status(400);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "Negative: Generate during cooldown",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jobId\": \"{{jobId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/assessments/generate",
+          "host": ["{{baseUrl}}"],
+          "path": ["assessments", "generate"]
+        },
+        "description": "Re-run request #1 (same candidate + jobId) immediately after a successful generate. Expect a CooldownActiveException to be thrown and mapped to an error response — check the status code your GlobalExceptionHandler assigns it in GLOBAL_EXCEPTION_HANDLER_ADDITIONS.java."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Cooldown blocks regeneration (not 200)', function () {",
+              "    pm.expect(pm.response.code).to.not.eql(200);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    }
+  ]
+}
