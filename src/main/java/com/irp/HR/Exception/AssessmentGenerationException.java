@@ -9,4 +9,3 @@ public class AssessmentGenerationException extends RuntimeException {
         super(message);
     }
 }
-

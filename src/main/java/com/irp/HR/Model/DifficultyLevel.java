@@ -5,4 +5,3 @@ public enum DifficultyLevel {
     MEDIUM,
     HARD
 }
-

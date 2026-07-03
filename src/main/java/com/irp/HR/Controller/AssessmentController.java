@@ -2,6 +2,7 @@ package com.irp.HR.Controller;
 
 import com.irp.HR.Dto.AssessmentResponseDTO;
 import com.irp.HR.Dto.AssessmentResultDTO;
+import com.irp.HR.Dto.AssessmentReviewDTO;
 import com.irp.HR.Dto.GenerateAssessmentRequest;
 import com.irp.HR.Dto.SubmitAssessmentRequest;
 import com.irp.HR.Security.UserPrincipal;
@@ -47,5 +48,12 @@ public class AssessmentController {
             @PathVariable UUID id,
             @AuthenticationPrincipal UserPrincipal principal) {
         return ResponseEntity.ok(assessmentService.getAssessment(id, principal.getId()));
+    }
+
+    @GetMapping("/{id}/review")
+    public ResponseEntity<AssessmentReviewDTO> review(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(assessmentService.getAssessmentReview(id, principal.getId()));
     }
 }

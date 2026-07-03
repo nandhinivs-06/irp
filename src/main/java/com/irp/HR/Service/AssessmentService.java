@@ -7,6 +7,7 @@ import com.irp.HR.Repository.AssessmentRepository;
 import com.irp.HR.Repository.CandidateAnswerRepository;
 import com.irp.HR.Repository.JobRepository;
 import com.irp.HR.Repository.ResumeRepository;
+import com.irp.HR.Repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -14,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -28,6 +30,7 @@ public class AssessmentService {
     private final AssessmentGeneratorService generatorService;
     private final JobRepository jobRepository;
     private final ResumeRepository resumeRepository;
+    private final UserRepository userRepository;
 
     @Value("${assessment.cooldown-days:30}")
     private int cooldownDays;
@@ -186,6 +189,93 @@ public class AssessmentService {
     public AssessmentResponseDTO getAssessment(UUID assessmentId, UUID candidateId) {
         Assessment assessment = getOwnedAssessment(assessmentId, candidateId);
         return toResponseDTO(assessment);
+    }
+
+    // ---------------------------------------------------------------
+    // 5. REVIEW (candidate sees correct vs. selected answers, post-submit only)
+    // ---------------------------------------------------------------
+    @Transactional(readOnly = true)
+    public AssessmentReviewDTO getAssessmentReview(UUID assessmentId, UUID candidateId) {
+        Assessment assessment = getOwnedAssessment(assessmentId, candidateId);
+
+        if (assessment.getStatus() != AssessmentStatus.COMPLETED) {
+            throw new InvalidAssessmentStateException(
+                    "Review is only available after submission. Current status: " + assessment.getStatus());
+        }
+
+        Map<UUID, CandidateAnswer> answersByQuestionId = assessment.getAnswers().stream()
+                .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a));
+
+        List<QuestionReviewDTO> reviewDTOs = assessment.getQuestions().stream()
+                .sorted(Comparator.comparing(AssessmentQuestion::getOrderIndex))
+                .map(q -> {
+                    CandidateAnswer answer = answersByQuestionId.get(q.getId());
+                    return QuestionReviewDTO.builder()
+                            .id(q.getId())
+                            .questionText(q.getQuestionText())
+                            .optionA(q.getOptionA())
+                            .optionB(q.getOptionB())
+                            .optionC(q.getOptionC())
+                            .optionD(q.getOptionD())
+                            .correctOption(q.getCorrectOption())
+                            .selectedOption(answer != null ? answer.getSelectedOption() : null)
+                            .isCorrect(answer != null ? answer.getCorrect() : false)
+                            .orderIndex(q.getOrderIndex())
+                            .build();
+                })
+                .collect(Collectors.toList());
+
+        return AssessmentReviewDTO.builder()
+                .assessmentId(assessment.getId())
+                .jobId(assessment.getJobId())
+                .difficultyLevel(assessment.getDifficultyLevel())
+                .status(assessment.getStatus())
+                .totalQuestions(assessment.getTotalQuestions())
+                .correctCount(assessment.getCorrectCount())
+                .score(assessment.getScore())
+                .submittedAt(assessment.getSubmittedAt())
+                .questions(reviewDTOs)
+                .build();
+    }
+
+    // ---------------------------------------------------------------
+    // 6. RECRUITER VIEW - all candidates' results for a job, filterable
+    // ---------------------------------------------------------------
+    @Transactional(readOnly = true)
+    public List<CandidateAssessmentSummaryDTO> getJobAssessments(
+            UUID jobId, AssessmentStatus status, Integer minScore, Integer maxScore, Boolean flagged) {
+
+        List<Assessment> assessments = assessmentRepository.findByJobId(jobId);
+
+        return assessments.stream()
+                .filter(a -> status == null || a.getStatus() == status)
+                .filter(a -> minScore == null || (a.getScore() != null && a.getScore() >= minScore))
+                .filter(a -> maxScore == null || (a.getScore() != null && a.getScore() <= maxScore))
+                .filter(a -> flagged == null || flagged.equals(a.getFlaggedForCheating()))
+                .sorted(Comparator.comparing(
+                        (Assessment a) -> a.getScore() == null ? -1 : a.getScore()).reversed())
+                .map(this::toSummaryDTO)
+                .collect(Collectors.toList());
+    }
+
+    private CandidateAssessmentSummaryDTO toSummaryDTO(Assessment assessment) {
+        User candidate = userRepository.findById(assessment.getCandidateId()).orElse(null);
+
+        return CandidateAssessmentSummaryDTO.builder()
+                .assessmentId(assessment.getId())
+                .candidateId(assessment.getCandidateId())
+                .candidateName(candidate != null ? candidate.getName() : "Unknown")
+                .candidateEmail(candidate != null ? candidate.getEmail() : "Unknown")
+                .difficultyLevel(assessment.getDifficultyLevel())
+                .status(assessment.getStatus())
+                .totalQuestions(assessment.getTotalQuestions())
+                .correctCount(assessment.getCorrectCount())
+                .score(assessment.getScore())
+                .tabSwitchCount(assessment.getTabSwitchCount())
+                .flaggedForCheating(assessment.getFlaggedForCheating())
+                .createdAt(assessment.getCreatedAt())
+                .submittedAt(assessment.getSubmittedAt())
+                .build();
     }
 
     // ---------------------------------------------------------------
