@@ -42,6 +42,9 @@ public class Resume {
     @Column(name = "extracted_skills", columnDefinition = "TEXT")
     private String extractedSkills; // comma-separated, filled in after Ollama parsing
 
+    @Column(name = "years_of_experience")
+    private Integer yearsOfExperience; // filled in after Ollama parsing; null if the model couldn't tell
+
     @CreationTimestamp
     @Column(name = "uploaded_at", nullable = false, updatable = false)
     private OffsetDateTime uploadedAt;

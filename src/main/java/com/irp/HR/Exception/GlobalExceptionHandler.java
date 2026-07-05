@@ -73,6 +73,37 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.BAD_REQUEST, ex.getMessage());
     }
 
+    // Add these @ExceptionHandler methods into your existing GlobalExceptionHandler
+// class (com.irp.HR.Exception.GlobalExceptionHandler). Uses the same
+// buildResponse(HttpStatus, String) helper and ErrorResponse shape already there.
+// No new imports needed beyond the exception classes themselves, since
+// GlobalExceptionHandler already lives in com.irp.HR.Exception.
+
+    @ExceptionHandler(CooldownActiveException.class)
+    public ResponseEntity<ErrorResponse> handleCooldownActive(CooldownActiveException ex) {
+        return buildResponse(HttpStatus.CONFLICT, ex.getMessage());
+    }
+
+    @ExceptionHandler(AssessmentNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleAssessmentNotFound(AssessmentNotFoundException ex) {
+        return buildResponse(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
+    @ExceptionHandler(InvalidAssessmentStateException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidAssessmentState(InvalidAssessmentStateException ex) {
+        return buildResponse(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
+
+    @ExceptionHandler(UnauthorizedAssessmentAccessException.class)
+    public ResponseEntity<ErrorResponse> handleUnauthorizedAssessmentAccess(UnauthorizedAssessmentAccessException ex) {
+        return buildResponse(HttpStatus.FORBIDDEN, ex.getMessage());
+    }
+
+    @ExceptionHandler(AssessmentGenerationException.class)
+    public ResponseEntity<ErrorResponse> handleAssessmentGenerationFailure(AssessmentGenerationException ex) {
+        return buildResponse(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+    }
+
     private ResponseEntity<ErrorResponse> buildResponse(HttpStatus status, String message) {
         ErrorResponse error = ErrorResponse.builder()
                 .status(status.value())

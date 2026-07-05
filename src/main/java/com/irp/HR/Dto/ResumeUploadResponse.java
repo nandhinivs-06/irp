@@ -7,6 +7,7 @@ public record ResumeUploadResponse(
         UUID resumeId,
         String fileName,
         String extractedSkills,
+        Integer yearsOfExperience,
         OffsetDateTime uploadedAt
 ) {
 }

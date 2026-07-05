@@ -51,6 +51,7 @@ public class ResumeController {
                 resume.getId(),
                 resume.getFileName(),
                 resume.getExtractedSkills(),
+                resume.getYearsOfExperience(),
                 resume.getUploadedAt()
         );
     }

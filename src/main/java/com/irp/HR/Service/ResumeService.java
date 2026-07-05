@@ -58,6 +58,7 @@ public class ResumeService {
 
         Resume resume = Resume.create(candidateId, file.getOriginalFilename(), destination.toString());
         resume.setExtractedSkills(skillsCsv);
+        resume.setYearsOfExperience(parsed.yearsOfExperience());
         return resumeRepository.save(resume);
     }
 

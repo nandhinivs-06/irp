@@ -3,8 +3,11 @@ package com.irp.HR.Controller;
 
 import com.irp.HR.DTO.JobRequest;
 import com.irp.HR.DTO.JobResponse;
+import com.irp.HR.Dto.CandidateAssessmentSummaryDTO;
+import com.irp.HR.Model.AssessmentStatus;
 import com.irp.HR.Model.Job;
 import com.irp.HR.Model.JobStatus;
+import com.irp.HR.Service.AssessmentService;
 import com.irp.HR.Service.JobService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +18,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -23,6 +27,7 @@ import java.util.UUID;
 public class JobController {
 
     private final JobService jobService;
+    private final AssessmentService assessmentService;
 
     /**
      * Recruiter creates a job posting: title, pasted JD text, and the
@@ -67,5 +72,26 @@ public class JobController {
     ) {
         Job job = jobService.updateStatus(jobId, status);
         return ResponseEntity.ok(JobResponse.from(job));
+    }
+
+    /**
+     * All candidates' assessment results for this job, recruiter-only.
+     * Sorted by score descending (unscored/in-progress attempts last).
+     * All filters are optional and combine with AND:
+     *   ?status=COMPLETED
+     *   ?minScore=50&maxScore=100
+     *   ?flagged=true   (only attempts flagged for tab-switching)
+     * Example: GET /jobs/{jobId}/assessments?status=COMPLETED&minScore=70
+     */
+    @GetMapping("/{jobId}/assessments")
+    @PreAuthorize("hasRole('RECRUITER')")
+    public ResponseEntity<List<CandidateAssessmentSummaryDTO>> getJobAssessments(
+            @PathVariable UUID jobId,
+            @RequestParam(required = false) AssessmentStatus status,
+            @RequestParam(required = false) Integer minScore,
+            @RequestParam(required = false) Integer maxScore,
+            @RequestParam(required = false) Boolean flagged
+    ) {
+        return ResponseEntity.ok(assessmentService.getJobAssessments(jobId, status, minScore, maxScore, flagged));
     }
 }

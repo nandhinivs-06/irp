@@ -67,6 +67,9 @@ public class SecurityConfig {
                         // recruiter account when testing in Postman.
                         .requestMatchers(HttpMethod.GET, "/jobs/*/matches").hasRole("RECRUITER")
 
+                        // Assessment endpoints — any authenticated user (candidate or recruiter)
+                        .requestMatchers("/assessments/**").authenticated()
+
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
