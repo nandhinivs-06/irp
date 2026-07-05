@@ -42,6 +42,7 @@ public class AssessmentService {
     private int tabSwitchFlagThreshold;
 
     private static final int QUESTION_COUNT = 20;
+    private static final int TEST_DURATION_MINUTES = 60; // time limit once the test is started
 
     // ---------------------------------------------------------------
     // 1. GENERATE
@@ -59,19 +60,27 @@ public class AssessmentService {
         Job job = jobRepository.findById(jobId)
                 .orElseThrow(() -> new IllegalArgumentException("Job not found with id: " + jobId));
 
-        DifficultyLevel difficulty = resolveDifficulty(candidateId);
+        // Pull years of experience ONCE and reuse it for both the difficulty
+        // tier AND the concrete calibration text sent to the model, so the
+        // two stay in sync (previously only the tier label was passed on,
+        // and the model never saw the actual number).
+        Integer years = resumeRepository.findTopByCandidateIdOrderByUploadedAtDesc(candidateId)
+                .map(Resume::getYearsOfExperience)
+                .orElse(null);
+
+        DifficultyLevel difficulty = resolveDifficulty(years);
 
         List<GeneratedQuestion> generated = generatorService.generateQuestions(
-                job.getTitle(), job.getDescription(), difficulty);
+                job.getTitle(), job.getDescription(), difficulty, years);
 
         Assessment assessment = Assessment.builder()
                 .candidateId(candidateId)
                 .jobId(jobId)
                 .difficultyLevel(difficulty)
                 .status(AssessmentStatus.GENERATED)
-                .totalQuestions(QUESTION_COUNT)
+                .totalQuestions(generated.size())   // use actual count (may be 15-20)
                 .createdAt(LocalDateTime.now())
-                .expiresAt(LocalDateTime.now().plusHours(startWindowHours))
+                .expiresAt(LocalDateTime.now().plusHours(startWindowHours)) // window to START
                 .tabSwitchCount(0)
                 .flaggedForCheating(false)
                 .build();
@@ -118,6 +127,8 @@ public class AssessmentService {
         if (assessment.getStatus() == AssessmentStatus.GENERATED) {
             assessment.setStatus(AssessmentStatus.IN_PROGRESS);
             assessment.setStartedAt(LocalDateTime.now());
+            // Override expiresAt to a fixed test-taking window from NOW
+            assessment.setExpiresAt(LocalDateTime.now().plusMinutes(TEST_DURATION_MINUTES));
             assessmentRepository.save(assessment);
         }
 
@@ -291,15 +302,14 @@ public class AssessmentService {
     }
 
     /**
-     * Pulls years of experience off the candidate's most recently uploaded
-     * resume (set by ResumeService/OllamaService during upload+parse).
+     * Maps years of experience to a difficulty tier.
      * No resume uploaded yet, or the model couldn't tell -> defaults to EASY.
+     *
+     * years == null or < 2  -> EASY   (fresher / beginner)
+     * years 2-5             -> MEDIUM (intermediate)
+     * years > 5             -> HARD   (senior)
      */
-    private DifficultyLevel resolveDifficulty(UUID candidateId) {
-        Integer years = resumeRepository.findTopByCandidateIdOrderByUploadedAtDesc(candidateId)
-                .map(Resume::getYearsOfExperience)
-                .orElse(null);
-
+    private DifficultyLevel resolveDifficulty(Integer years) {
         if (years == null) {
             return DifficultyLevel.EASY;
         } else if (years < 2) {

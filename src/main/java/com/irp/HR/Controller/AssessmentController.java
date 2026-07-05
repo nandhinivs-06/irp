@@ -3,8 +3,10 @@ package com.irp.HR.Controller;
 import com.irp.HR.Dto.AssessmentResponseDTO;
 import com.irp.HR.Dto.AssessmentResultDTO;
 import com.irp.HR.Dto.AssessmentReviewDTO;
+import com.irp.HR.Dto.CandidateAssessmentSummaryDTO;
 import com.irp.HR.Dto.GenerateAssessmentRequest;
 import com.irp.HR.Dto.SubmitAssessmentRequest;
+import com.irp.HR.Model.AssessmentStatus;
 import com.irp.HR.Security.UserPrincipal;
 import com.irp.HR.Service.AssessmentService;
 import jakarta.validation.Valid;
@@ -13,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -55,5 +58,17 @@ public class AssessmentController {
             @PathVariable UUID id,
             @AuthenticationPrincipal UserPrincipal principal) {
         return ResponseEntity.ok(assessmentService.getAssessmentReview(id, principal.getId()));
+    }
+
+    /** RECRUITER — list all candidate assessment results for a job with optional filters */
+    @GetMapping("/jobs/{jobId}")
+    public ResponseEntity<List<CandidateAssessmentSummaryDTO>> getJobAssessments(
+            @PathVariable UUID jobId,
+            @RequestParam(required = false) AssessmentStatus status,
+            @RequestParam(required = false) Integer minScore,
+            @RequestParam(required = false) Integer maxScore,
+            @RequestParam(required = false) Boolean flagged) {
+        return ResponseEntity.ok(
+                assessmentService.getJobAssessments(jobId, status, minScore, maxScore, flagged));
     }
 }
