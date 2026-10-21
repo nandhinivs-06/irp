@@ -1,8 +1,8 @@
 package com.irp.HR.Controller;
 
 
-import com.irp.HR.DTO.JobRequest;
-import com.irp.HR.DTO.JobResponse;
+import com.irp.HR.Dto.JobRequest;
+import com.irp.HR.Dto.JobResponse;
 import com.irp.HR.Dto.CandidateAssessmentSummaryDTO;
 import com.irp.HR.Model.AssessmentStatus;
 import com.irp.HR.Model.Job;

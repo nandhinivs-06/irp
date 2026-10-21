@@ -13,7 +13,13 @@ public class SubmitAnswerDTO {
     @NotNull(message = "questionId is required")
     private UUID questionId;
 
-    @NotBlank(message = "selectedOption is required")
-    @Pattern(regexp = "^[ABCD]$", message = "selectedOption must be one of A, B, C, D")
+    // For MCQs: "A" | "B" | "C" | "D". Null for coding questions.
+    @Pattern(regexp = "^[ABCD]?$", message = "selectedOption must be one of A, B, C, D")
     private String selectedOption;
+
+    // For coding questions
+    private String submittedCode;
+
+    // "python" | "javascript" | "java"
+    private String selectedLanguage;
 }

@@ -2,8 +2,8 @@ package com.irp.HR.Service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.irp.HR.Exception.AssessmentGenerationException;
 import com.irp.HR.Model.DifficultyLevel;
+import com.irp.HR.Model.QuestionType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,27 +11,16 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Generates MCQ questions via Ollama /api/generate.
- *
- * Difficulty is now driven by BOTH the DifficultyLevel enum AND the actual
- * years of experience — the model is told explicitly what kind of question
- * each tier means (definitions vs applied scenarios vs system-design /
- * advanced coding), instead of just seeing the word "HARD" and guessing.
- *
- * Prompt format: explicit rules + a single full example object, no dangling
- * "continue this partial JSON" prefix trick (small models like llama3.2
- * tend to ignore that and fall back to plain question strings instead of
- * objects — that was the root cause of "array has N elements, parsed 0").
- *
- * Falls back to a static question bank if the model fails, so the
- * assessment is never blocked.
+ * Generates 20 assessment questions:
+ * - 12 General MCQs
+ * - 5 Coding MCQs (with code snippets / algorithm analysis)
+ * - 3 Hands-on Coding Problems (with test cases and multi-language starter templates)
  */
 @Service
 public class AssessmentGeneratorService {
@@ -42,13 +31,14 @@ public class AssessmentGeneratorService {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String model;
 
-    private static final int QUESTION_COUNT = 20;
-    private static final int MIN_ACCEPTABLE  = 3;
-    private static final int MAX_RETRIES     = 2;
+    private static final int GENERAL_MCQ_COUNT = 12;
+    private static final int CODING_MCQ_COUNT  = 5;
+    private static final int CODING_PROB_COUNT = 3;
+    private static final int MAX_RETRIES       = 2;
 
     public AssessmentGeneratorService(
             @Value("${ollama.base-url:http://localhost:11434}") String baseUrl,
-            @Value("${ollama.model:llama3}") String model
+            @Value("${ollama.model:llama3.2}") String model
     ) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10_000);
@@ -60,206 +50,130 @@ public class AssessmentGeneratorService {
         this.model = model;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Public entry point
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * @param yearsOfExperience actual years pulled from the candidate's resume
-     *                          (nullable — treated as a fresher/0 if absent).
-     *                          Used to give the model concrete calibration
-     *                          instead of just the difficulty label.
-     */
     public List<GeneratedQuestion> generateQuestions(
             String jobTitle, String jobDescription, DifficultyLevel difficulty, Integer yearsOfExperience) {
 
-        // Truncate description to keep prompt inside context window
-        String desc = (jobDescription == null ? "" : jobDescription);
-        if (desc.length() > 300) desc = desc.substring(0, 300) + "…";
+        log.info("[AssessmentGen] Generating assessment for '{}', difficulty={}, exp={} yrs",
+                jobTitle, difficulty, yearsOfExperience);
 
-        int years = yearsOfExperience != null ? yearsOfExperience : 0;
+        // 1. Get 12 General MCQs
+        List<GeneratedQuestion> generalMcqs = getGeneralMcqs(jobTitle, jobDescription, difficulty, yearsOfExperience);
 
-        // Generate in 2 batches of 10 — the model handles 10 reliably
-        List<GeneratedQuestion> allQuestions = new ArrayList<>();
+        // 2. Get 5 Coding MCQs
+        List<GeneratedQuestion> codingMcqs = getCodingMcqs(difficulty);
 
-        for (int batch = 1; batch <= 2; batch++) {
-            log.info("[AssessmentGen] batch {}/2", batch);
-            String prompt = buildPrompt(jobTitle, desc, difficulty, batch, years);
+        // 3. Get 3 Hands-on Coding Problems
+        List<GeneratedQuestion> codingProblems = getHandsOnCodingQuestions(difficulty);
 
-            for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-                log.info("[AssessmentGen] batch {} attempt {}/{}", batch, attempt, MAX_RETRIES);
-                try {
-                    String rawModel = callOllama(prompt);
-                    log.info("[AssessmentGen] raw model output (first 800 chars):\n{}",
-                            rawModel.length() > 800 ? rawModel.substring(0, 800) + "…" : rawModel);
+        List<GeneratedQuestion> all = new ArrayList<>();
+        all.addAll(generalMcqs);
+        all.addAll(codingMcqs);
+        all.addAll(codingProblems);
 
-                    List<GeneratedQuestion> questions = parseQuestions(rawModel);
-                    log.info("[AssessmentGen] parsed {} questions from batch {}", questions.size(), batch);
+        log.info("[AssessmentGen] Created total {} questions: {} general MCQs, {} coding MCQs, {} coding problems",
+                all.size(), generalMcqs.size(), codingMcqs.size(), codingProblems.size());
 
-                    if (questions.size() >= MIN_ACCEPTABLE) {
-                        allQuestions.addAll(questions);
-                        break; // batch succeeded, move to next
+        return all;
+    }
+
+    private List<GeneratedQuestion> getGeneralMcqs(String jobTitle, String jobDesc, DifficultyLevel difficulty, Integer years) {
+        String desc = (jobDesc == null ? "" : jobDesc);
+        if (desc.length() > 300) desc = desc.substring(0, 300) + "...";
+        int exp = years != null ? years : 0;
+
+        String prompt = buildPrompt(jobTitle, desc, difficulty, exp);
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                String rawModel = callOllama(prompt);
+                List<GeneratedQuestion> parsed = parseQuestions(rawModel);
+                if (parsed.size() >= 8) {
+                    if (parsed.size() > GENERAL_MCQ_COUNT) {
+                        return new ArrayList<>(parsed.subList(0, GENERAL_MCQ_COUNT));
+                    } else if (parsed.size() == GENERAL_MCQ_COUNT) {
+                        return parsed;
                     }
-                    log.warn("[AssessmentGen] only {} questions parsed, retrying batch {}", questions.size(), batch);
-                } catch (Exception e) {
-                    log.warn("[AssessmentGen] batch {} attempt {} exception: {}", batch, attempt, e.getMessage());
                 }
+            } catch (Exception e) {
+                log.warn("[AssessmentGen] Ollama general MCQ generation attempt {} failed: {}", attempt, e.getMessage());
             }
         }
 
-        if (allQuestions.size() >= MIN_ACCEPTABLE) {
-            log.info("[AssessmentGen] SUCCESS — returning {} AI-generated questions", allQuestions.size());
-            return allQuestions;
-        }
-
-        // All AI attempts failed — use static fallback so assessment always works
-        log.warn("[AssessmentGen] AI failed, got only {} questions. Using fallback bank", allQuestions.size());
-        return buildFallback(jobTitle, difficulty);
+        log.info("[AssessmentGen] Using curated General MCQ bank");
+        return getCuratedGeneralMcqs(difficulty);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Prompt — explicit rules + one full example object, PLUS a concrete
-    // per-tier description of what "difficulty" should mean in practice.
-    // ─────────────────────────────────────────────────────────────────────────
-
-    private String buildPrompt(String jobTitle, String desc, DifficultyLevel difficulty, int batch, int years) {
-        String batchHint = batch == 2
-                ? " These must be DIFFERENT questions from the previous batch."
-                : "";
-
-        String tierGuidance = switch (difficulty) {
-            case EASY -> "The candidate has " + years + " year(s) of experience (a fresher/beginner). " +
-                    "Ask FUNDAMENTAL questions: basic definitions, core syntax, what things are and " +
-                    "what they're used for. Avoid multi-step reasoning, tricky edge cases, or system design.";
-            case MEDIUM -> "The candidate has " + years + " year(s) of experience (an intermediate developer). " +
-                    "Ask APPLIED questions: when to use one approach over another, common pitfalls, " +
-                    "best practices, and how concepts are used together in a real project. " +
-                    "Avoid pure definitions — but avoid full system-design or algorithmic proofs too.";
-            case HARD -> "The candidate has " + years + " year(s) of experience (a senior/highly skilled engineer). " +
-                    "Ask ADVANCED questions: system design trade-offs, performance and scaling concerns, " +
-                    "debugging subtle bugs, algorithmic complexity, security implications, and " +
-                    "architecture-level decisions. Treat this candidate as an expert — do NOT ask basic " +
-                    "definition questions.";
-        };
-
-        return String.format(
-                "You generate multiple-choice interview questions as JSON.\n\n" +
-                        "Task: Create exactly 10 MCQ questions for a \"%s\" role.%s\n" +
-                        "Job context: %s\n\n" +
-                        "Difficulty calibration:\n%s\n\n" +
-                        "Rules:\n" +
-                        "- Output ONLY a JSON array. No preamble, no markdown, no explanation.\n" +
-                        "- Every element MUST be a JSON OBJECT (never a plain string) with exactly these keys:\n" +
-                        "  question, optionA, optionB, optionC, optionD, correctOption\n" +
-                        "- correctOption is exactly one of: \"A\", \"B\", \"C\", \"D\"\n\n" +
-                        "Example of the REQUIRED format (this is what ONE element must look like):\n" +
-                        "{\"question\":\"What does API stand for?\",\"optionA\":\"Application Programming Interface\"," +
-                        "\"optionB\":\"Applied Protocol Integration\",\"optionC\":\"Automated Program Interaction\"," +
-                        "\"optionD\":\"Application Process Integration\",\"correctOption\":\"A\"}\n\n" +
-                        "Now output the full JSON array of 10 such objects, calibrated to the difficulty above:",
-                jobTitle, batchHint, desc, tierGuidance
-        );
+    private String buildPrompt(String jobTitle, String desc, DifficultyLevel difficulty, int years) {
+        return """
+                You are a senior technical interviewer creating a multiple-choice assessment for:
+                Job Title: %s
+                Target Experience: %d years (Difficulty: %s)
+                Job Summary: %s
+                
+                Generate exactly 12 multiple-choice questions (MCQs) testing core concepts, APIs, databases, architecture, and engineering principles.
+                
+                Respond ONLY with a JSON array of objects:
+                [
+                  {
+                    "question": "What is the primary benefit of connection pooling in databases?",
+                    "optionA": "It permanently reserves database memory",
+                    "optionB": "It reduces the overhead of repeatedly opening and closing connections",
+                    "optionC": "It automatically encrypts query results",
+                    "optionD": "It replaces indexing on foreign keys",
+                    "correctOption": "B"
+                  }
+                ]
+                """.formatted(jobTitle, years, difficulty, desc);
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Ollama /api/generate call  (exchange reads raw bytes — bypasses content-type)
-    // ─────────────────────────────────────────────────────────────────────────
 
     private String callOllama(String prompt) {
-        Map<String, Object> requestBody = Map.of(
-                "model",  model,
+        Map<String, Object> body = Map.of(
+                "model", model,
                 "prompt", prompt,
                 "stream", false,
-                // num_predict trimmed from 8192 -> 2048. Small models drift/
-                // simplify format on very long generations; 10 MCQ objects
-                // comfortably fit in ~2000 tokens and staying shorter keeps
-                // the model closer to the example format the whole way through.
-                "options", Map.of("temperature", 0, "num_predict", 2048)
+                "options", Map.of("temperature", 0.3)
         );
 
-        String rawBody;
-        try {
-            rawBody = restClient.post()
-                    .uri("/api/generate")
-                    .body(requestBody)
-                    .exchange((req, res) -> {
-                        try {
-                            byte[] bytes = res.getBody().readAllBytes();
-                            return new String(bytes, StandardCharsets.UTF_8);
-                        } catch (IOException e) {
-                            throw new AssessmentGenerationException("Read error: " + e.getMessage(), e);
-                        }
-                    });
-        } catch (AssessmentGenerationException age) {
-            throw age;
-        } catch (Exception e) {
-            throw new AssessmentGenerationException("Ollama unreachable: " + e.getMessage(), e);
-        }
+        String json = restClient.post()
+                .uri("/api/generate")
+                .header("Content-Type", "application/json")
+                .body(body)
+                .retrieve()
+                .body(String.class);
 
-        if (rawBody == null || rawBody.isBlank()) {
-            throw new AssessmentGenerationException("Ollama returned empty body");
-        }
-
-        // Unwrap /api/generate envelope: { "response": "<model output>", ... }
         try {
-            JsonNode env = objectMapper.readTree(rawBody);
-            if (env.has("error")) {
-                throw new AssessmentGenerationException("Ollama error: " + env.path("error").asText());
-            }
-            JsonNode resp = env.path("response");
-            if (resp.isMissingNode() || resp.isNull()) {
-                throw new AssessmentGenerationException(
-                        "Missing 'response' in Ollama envelope. Body snippet: "
-                                + rawBody.substring(0, Math.min(300, rawBody.length())));
-            }
-            return resp.asText();
-        } catch (AssessmentGenerationException age) {
-            throw age;
+            JsonNode root = objectMapper.readTree(json);
+            return root.path("response").asText("");
         } catch (Exception e) {
-            throw new AssessmentGenerationException("Envelope parse error: " + e.getMessage(), e);
+            throw new RuntimeException("Failed to parse Ollama response wrapper: " + e.getMessage(), e);
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Parsing — lenient, handles many model output variations
-    // ─────────────────────────────────────────────────────────────────────────
+    private List<GeneratedQuestion> parseQuestions(String raw) {
+        List<GeneratedQuestion> result = new ArrayList<>();
+        if (raw == null || raw.isBlank()) return result;
 
-    private List<GeneratedQuestion> parseQuestions(String raw) throws Exception {
-        String cleaned = extractJsonArray(raw);
-        log.info("[AssessmentGen] extracted JSON (first 300 chars): {}",
-                cleaned.length() > 300 ? cleaned.substring(0, 300) + "…" : cleaned);
-
-        JsonNode root  = objectMapper.readTree(cleaned);
-
-        // Handle both plain array and { "questions": [...] } wrapper
-        JsonNode array = root.isArray() ? root : root.path("questions");
-        log.info("[AssessmentGen] array has {} elements", array.size());
-
-        // Fast, clear failure instead of silently skipping every item when the
-        // model returns plain strings ["What is...", ...] instead of objects.
-        if (array.size() > 0 && !array.get(0).isObject()) {
-            log.warn("[AssessmentGen] model returned plain strings instead of JSON objects " +
-                            "(e.g. \"{}\") — rejecting batch, will retry",
-                    array.get(0).asText());
-            return new ArrayList<>();
+        String jsonArray = extractJsonArray(raw);
+        JsonNode arr;
+        try {
+            arr = objectMapper.readTree(jsonArray);
+        } catch (Exception e) {
+            return result;
         }
 
-        List<GeneratedQuestion> result = new ArrayList<>();
-        for (int idx = 0; idx < array.size(); idx++) {
-            JsonNode node = array.get(idx);
-            String q   = nodeText(node, "question", "text", "q");
-            if (q.isEmpty()) { log.debug("[AssessmentGen] item {} skipped: no question text", idx); continue; }
+        if (!arr.isArray()) return result;
 
+        for (int i = 0; i < arr.size(); i++) {
+            JsonNode node = arr.get(i);
+            String q = nodeText(node, "question", "text", "q");
             String optA = nodeText(node, "optionA", "option_a", "a");
             String optB = nodeText(node, "optionB", "option_b", "b");
             String optC = nodeText(node, "optionC", "option_c", "c");
             String optD = nodeText(node, "optionD", "option_d", "d");
-            String cor  = extractCorrectLetter(node,
-                    "correctOption", "correctAnswer", "answer", "correct", "correct_option");
+            String cor = extractCorrectLetter(node, "correctOption", "correctAnswer", "answer", "correct");
 
-            if (cor == null) { log.debug("[AssessmentGen] item {} skipped: no correctOption", idx); continue; }
-            if (optA.isEmpty() || optB.isEmpty()) { log.debug("[AssessmentGen] item {} skipped: missing options", idx); continue; }
-            result.add(new GeneratedQuestion(q, optA, optB, optC, optD, cor));
+            if (!q.isEmpty() && !optA.isEmpty() && !optB.isEmpty() && cor != null) {
+                result.add(GeneratedQuestion.mcq(q, optA, optB, optC, optD, cor));
+            }
         }
         return result;
     }
@@ -272,7 +186,6 @@ public class AssessmentGeneratorService {
         return "";
     }
 
-    /** Scans field candidates for first A/B/C/D character — handles "B", "b", "B.", "B)", "Option B". */
     private String extractCorrectLetter(JsonNode node, String... fields) {
         for (String f : fields) {
             String val = node.path(f).asText("").trim().toUpperCase();
@@ -283,167 +196,236 @@ public class AssessmentGeneratorService {
         return null;
     }
 
-    /**
-     * Finds the first [...] block in text; auto-closes truncated arrays.
-     * FALLS BACK to stitching together standalone {...}{...} objects when
-     * the model skips the array wrapper entirely and just emits one JSON
-     * object per line (observed with llama3.2 on batch 2 — no '[' anywhere
-     * in the output, just objects separated by blank lines).
-     */
     private String extractJsonArray(String text) {
         if (text == null || text.isBlank()) return "[]";
         String s = text.trim();
-        // Strip markdown fences
         if (s.startsWith("```")) {
             s = s.replaceFirst("^```(json)?\\s*", "").trim();
             if (s.endsWith("```")) s = s.substring(0, s.length() - 3).trim();
         }
         int start = s.indexOf('[');
-        if (start < 0) {
-            // No array bracket anywhere — try to salvage standalone objects.
-            return stitchStandaloneObjects(s);
-        }
+        if (start < 0) return "[]";
 
         int depth = 0;
         boolean inStr = false, esc = false;
         for (int i = start; i < s.length(); i++) {
             char c = s.charAt(i);
-            if (esc)              { esc = false; continue; }
+            if (esc) { esc = false; continue; }
             if (c == '\\' && inStr) { esc = true; continue; }
-            if (c == '"')         { inStr = !inStr; continue; }
-            if (inStr)            continue;
+            if (c == '"') { inStr = !inStr; continue; }
+            if (inStr) continue;
             if (c == '[') depth++;
-            else if (c == ']') { depth--; if (depth == 0) return s.substring(start, i + 1); }
+            else if (c == ']') {
+                depth--;
+                if (depth == 0) return s.substring(start, i + 1);
+            }
         }
-        // Auto-close truncated array
         StringBuilder closed = new StringBuilder(s.substring(start));
         for (int i = 0; i < depth; i++) closed.append(']');
         return closed.toString();
     }
 
-    /**
-     * Scans text for top-level {...} objects placed back-to-back (no array
-     * wrapper, no commas — just whitespace/newlines between them) and joins
-     * them into a single valid JSON array string. Ignores any non-JSON text
-     * between objects (preamble, stray commentary, etc).
-     */
-    private String stitchStandaloneObjects(String s) {
-        List<String> objects = new ArrayList<>();
-        int i = 0;
-        int n = s.length();
-        while (i < n) {
-            int objStart = s.indexOf('{', i);
-            if (objStart < 0) break;
-
-            int depth = 0;
-            boolean inStr = false, esc = false;
-            int j = objStart;
-            for (; j < n; j++) {
-                char c = s.charAt(j);
-                if (esc)               { esc = false; continue; }
-                if (c == '\\' && inStr) { esc = true; continue; }
-                if (c == '"')          { inStr = !inStr; continue; }
-                if (inStr)             continue;
-                if (c == '{') depth++;
-                else if (c == '}') {
-                    depth--;
-                    if (depth == 0) { j++; break; }
-                }
-            }
-            if (depth != 0) {
-                // Truncated final object — auto-close and take what we have.
-                StringBuilder closed = new StringBuilder(s.substring(objStart, n));
-                for (int k = 0; k < depth; k++) closed.append('}');
-                objects.add(closed.toString());
-                break;
-            }
-            objects.add(s.substring(objStart, j));
-            i = j;
-        }
-
-        if (objects.isEmpty()) return "[]";
-        return "[" + String.join(",", objects) + "]";
+    // ─────────────────────────────────────────────────────────────────────────
+    // 5 Coding MCQs (Code snippets, algorithm complexity, output prediction)
+    // ─────────────────────────────────────────────────────────────────────────
+    private List<GeneratedQuestion> getCodingMcqs(DifficultyLevel difficulty) {
+        return List.of(
+                GeneratedQuestion.codingMcq(
+                        "What is the output of the following JavaScript code?\n\n```javascript\nconsole.log(1 + '2' + 3);\nconsole.log(4 - '2' + 1);\n```",
+                        "\"123\" and 3",
+                        "6 and 3",
+                        "\"123\" and \"421\"",
+                        "TypeError and 3",
+                        "A"
+                ),
+                GeneratedQuestion.codingMcq(
+                        "What is the time complexity of the following algorithm?\n\n```java\nfor (int i = 0; i < n; i++) {\n    for (int j = 1; j < n; j *= 2) {\n        sum += (i + j);\n    }\n}\n```",
+                        "O(n^2)",
+                        "O(n log n)",
+                        "O(n)",
+                        "O(log n)",
+                        "B"
+                ),
+                GeneratedQuestion.codingMcq(
+                        "In Python, what is the output of the following function calls?\n\n```python\ndef append_item(x, lst=[]):\n    lst.append(x)\n    return lst\n\nprint(append_item(1))\nprint(append_item(2))\n```",
+                        "[1] and [2]",
+                        "[1] and [1, 2]",
+                        "[1, 2] and [1, 2]",
+                        "TypeError: mutable default argument",
+                        "B"
+                ),
+                GeneratedQuestion.codingMcq(
+                        "In Java, what will this code print?\n\n```java\nString s1 = \"hello\";\nString s2 = new String(\"hello\");\nSystem.out.println((s1 == s2) + \" \" + s1.equals(s2));\n```",
+                        "true true",
+                        "false false",
+                        "false true",
+                        "true false",
+                        "C"
+                ),
+                GeneratedQuestion.codingMcq(
+                        "What does the following recursive function compute for positive integer n?\n\n```python\ndef mystery(n):\n    if n <= 1: return 1\n    return n * mystery(n - 1)\n```",
+                        "Fibonacci sequence at n",
+                        "Sum of first n integers",
+                        "Factorial of n (n!)",
+                        "2 to the power of n",
+                        "C"
+                )
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Fallback — 20 generic tech questions used when AI generation fails.
-    // Ensures the assessment flow is never blocked by model issues.
+    // 3 Hands-on Coding Problems with Test Cases & Multi-language Boilerplates
     // ─────────────────────────────────────────────────────────────────────────
+    private List<GeneratedQuestion> getHandsOnCodingQuestions(DifficultyLevel difficulty) {
+        String allowedLangs = "python,javascript,java";
 
-    private List<GeneratedQuestion> buildFallback(String jobTitle, DifficultyLevel difficulty) {
-        log.info("[AssessmentGen] Serving fallback questions (difficulty={})", difficulty);
+        // Problem 1: Palindrome Check
+        String p1Desc = """
+                ### Problem 1: Palindrome Verification
+                Write a function that checks whether a given string is a **palindrome** (reads the same forwards and backwards).
+                - Ignore all non-alphanumeric characters.
+                - Comparison must be case-insensitive.
+                
+                **Input Format:**
+                A single line from standard input containing the string.
+                
+                **Output Format:**
+                Print `true` if it is a palindrome, or `false` otherwise.
+                """;
+
+        String p1Starters = """
+                {
+                  "python": "import sys\\n\\ndef is_palindrome(s):\\n    # TODO: Write your solution here\\n    pass\\n\\nif __name__ == '__main__':\\n    line = sys.stdin.read().strip()\\n    print(is_palindrome(line))\\n",
+                  "javascript": "const fs = require('fs');\\n\\nfunction isPalindrome(s) {\\n    // TODO: Write your solution here\\n    return '';\\n}\\n\\nconst input = fs.readFileSync(0, 'utf-8').trim();\\nconsole.log(isPalindrome(input));\\n",
+                  "java": "import java.io.*;\\nimport java.util.*;\\n\\npublic class Solution {\\n    public static void main(String[] args) throws Exception {\\n        BufferedReader br = new BufferedReader(new InputStreamReader(System.in));\\n        String s = br.readLine();\\n        if (s == null) s = \\"\\";\\n        // TODO: Write your solution here\\n        System.out.println(\\"\\");\\n    }\\n}\\n"
+                }
+                """;
+
+        String p1TestCases = """
+                [
+                  {"input": "racecar", "expectedOutput": "true", "isHidden": false},
+                  {"input": "hello world", "expectedOutput": "false", "isHidden": false},
+                  {"input": "A man, a plan, a canal: Panama", "expectedOutput": "true", "isHidden": true}
+                ]
+                """;
+
+        // Problem 2: Two Sum
+        String p2Desc = """
+                ### Problem 2: Two Sum
+                Given a target sum on the first line and space-separated integers on the second line, find two distinct 0-based indices whose elements sum up to the target.
+                
+                **Input Format:**
+                Line 1: An integer target.
+                Line 2: Space-separated integers.
+                
+                **Output Format:**
+                Print the two indices separated by a space (smaller index first, e.g. `0 1`). If no such pair exists, print `-1`.
+                """;
+
+        String p2Starters = """
+                {
+                  "python": "import sys\\n\\ndef two_sum(target, nums):\\n    # TODO: Write your solution here\\n    pass\\n\\nif __name__ == '__main__':\\n    lines = sys.stdin.read().strip().splitlines()\\n    if len(lines) >= 2:\\n        t = int(lines[0].strip())\\n        arr = list(map(int, lines[1].strip().split()))\\n        print(two_sum(t, arr))\\n    else:\\n        print('-1')\\n",
+                  "javascript": "const fs = require('fs');\\n\\nfunction twoSum(target, nums) {\\n    // TODO: Write your solution here\\n    return '';\\n}\\n\\nconst lines = fs.readFileSync(0, 'utf-8').trim().split('\\n');\\nif (lines.length >= 2) {\\n    const target = parseInt(lines[0].trim());\\n    const nums = lines[1].trim().split(/\\\\s+/).map(Number);\\n    console.log(twoSum(target, nums));\\n} else {\\n    console.log('');\\n}\\n",
+                  "java": "import java.io.*;\\nimport java.util.*;\\n\\npublic class Solution {\\n    public static void main(String[] args) throws Exception {\\n        BufferedReader br = new BufferedReader(new InputStreamReader(System.in));\\n        String line1 = br.readLine();\\n        String line2 = br.readLine();\\n        if (line1 == null || line2 == null) { System.out.println(\\"\\"); return; }\\n        int target = Integer.parseInt(line1.trim());\\n        String[] parts = line2.trim().split(\\"\\\\\\\\s+\\");\\n        // TODO: Write your solution here\\n        System.out.println(\\"\\");\\n    }\\n}\\n"
+                }
+                """;
+
+        String p2TestCases = """
+                [
+                  {"input": "9\\n2 7 11 15", "expectedOutput": "0 1", "isHidden": false},
+                  {"input": "6\\n3 2 4", "expectedOutput": "1 2", "isHidden": false},
+                  {"input": "10\\n1 2 3 4", "expectedOutput": "-1", "isHidden": true}
+                ]
+                """;
+
+        // Problem 3: Valid Parentheses
+        String p3Desc = """
+                ### Problem 3: Valid Parentheses
+                Given a string containing just the characters `'('`, `')'`, `'{'`, `'}'`, `'['` and `']'`, determine if the input string has valid matching brackets.
+                - Open brackets must be closed by the same type of brackets.
+                - Open brackets must be closed in the correct order.
+                
+                **Input Format:**
+                A single line containing the bracket string.
+                
+                **Output Format:**
+                Print `true` if valid, or `false` otherwise.
+                """;
+
+        String p3Starters = """
+                {
+                  "python": "import sys\\n\\ndef is_valid(s):\\n    # TODO: Write your solution here\\n    pass\\n\\nif __name__ == '__main__':\\n    line = sys.stdin.read().strip()\\n    print(is_valid(line))\\n",
+                  "javascript": "const fs = require('fs');\\n\\nfunction isValid(s) {\\n    // TODO: Write your solution here\\n    return '';\\n}\\n\\nconst input = fs.readFileSync(0, 'utf-8').trim();\\nconsole.log(isValid(input));\\n",
+                  "java": "import java.io.*;\\nimport java.util.*;\\n\\npublic class Solution {\\n    public static void main(String[] args) throws Exception {\\n        BufferedReader br = new BufferedReader(new InputStreamReader(System.in));\\n        String s = br.readLine();\\n        if (s == null) s = \\"\\";\\n        // TODO: Write your solution here\\n        System.out.println(\\"\\");\\n    }\\n}\\n"
+                }
+                """;
+
+        String p3TestCases = """
+                [
+                  {"input": "()[]{}", "expectedOutput": "true", "isHidden": false},
+                  {"input": "(]", "expectedOutput": "false", "isHidden": false},
+                  {"input": "{[]}", "expectedOutput": "true", "isHidden": true}
+                ]
+                """;
+
         return List.of(
-                new GeneratedQuestion("What does API stand for?",
+                GeneratedQuestion.coding(p1Desc.trim(), p1Starters.trim(), p1TestCases.trim(), allowedLangs),
+                GeneratedQuestion.coding(p2Desc.trim(), p2Starters.trim(), p2TestCases.trim(), allowedLangs),
+                GeneratedQuestion.coding(p3Desc.trim(), p3Starters.trim(), p3TestCases.trim(), allowedLangs)
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Curated General MCQs (12 questions)
+    // ─────────────────────────────────────────────────────────────────────────
+    private List<GeneratedQuestion> getCuratedGeneralMcqs(DifficultyLevel difficulty) {
+        return List.of(
+                GeneratedQuestion.mcq("What does API stand for?",
                         "Application Programming Interface", "Automated Program Interaction",
                         "Applied Protocol Integration", "Application Process Integration", "A"),
-                new GeneratedQuestion("Which HTTP method is used to CREATE a new resource?",
-                        "GET", "POST", "DELETE", "PUT", "B"),
-                new GeneratedQuestion("What is the primary purpose of version control (e.g. Git)?",
-                        "Speed up compilation",
-                        "Track and manage code changes over time",
-                        "Deploy applications automatically",
-                        "Encrypt source code", "B"),
-                new GeneratedQuestion("Which best describes a REST API?",
-                        "A stateful protocol requiring persistent connections",
-                        "A binary messaging protocol",
-                        "A stateless architectural style using HTTP methods",
-                        "A database query language", "C"),
-                new GeneratedQuestion("What does SQL stand for?",
-                        "Structured Query Language", "Simple Question Language",
-                        "Standard Queue Logic", "System Query Library", "A"),
-                new GeneratedQuestion("Which data structure operates on a Last-In-First-Out (LIFO) basis?",
-                        "Queue", "Linked List", "Stack", "Tree", "C"),
-                new GeneratedQuestion("What is the purpose of a foreign key in a relational database?",
-                        "Speed up full-table scans",
-                        "Enforce a link between records in two tables",
-                        "Encrypt sensitive columns", "Automatically back up data", "B"),
-                new GeneratedQuestion("In OOP, what is encapsulation?",
-                        "Inheriting behaviour from a parent class",
-                        "Overriding a method in a subclass",
-                        "Bundling data and methods within a class",
-                        "Defining multiple methods with the same name", "C"),
-                new GeneratedQuestion("What does CI/CD stand for?",
-                        "Code Integration / Code Deployment",
-                        "Continuous Integration / Continuous Delivery",
-                        "Central Infrastructure / Container Delivery",
-                        "Core Interface / Component Design", "B"),
-                new GeneratedQuestion("Which of the following is a NoSQL database?",
-                        "PostgreSQL", "MySQL", "Oracle DB", "MongoDB", "D"),
-                new GeneratedQuestion("What is the time complexity of binary search?",
-                        "O(n)", "O(n log n)", "O(log n)", "O(1)", "C"),
-                new GeneratedQuestion("Which HTTP status code indicates a resource was not found?",
-                        "200", "301", "404", "500", "C"),
-                new GeneratedQuestion("What does the term 'idempotent' mean for an HTTP method?",
-                        "The request is encrypted",
-                        "Multiple identical requests produce the same result as a single one",
-                        "The server never stores state",
-                        "The response is always cached", "B"),
-                new GeneratedQuestion("What is a microservice architecture?",
-                        "A single large application handling all functionality",
-                        "An app built as a collection of small independent services",
-                        "A design for database partitioning",
-                        "A caching strategy for web apps", "B"),
-                new GeneratedQuestion("Which of the following is a creational design pattern?",
-                        "Observer", "Strategy", "Singleton", "Decorator", "C"),
-                new GeneratedQuestion("What does ACID stand for in databases?",
+                GeneratedQuestion.mcq("Which HTTP method is idempotent and used to update or replace an entire resource?",
+                        "POST", "PUT", "PATCH", "DELETE", "B"),
+                GeneratedQuestion.mcq("What is the primary benefit of database indexing?",
+                        "It eliminates NULL values",
+                        "It accelerates data retrieval at the cost of additional write overhead and storage",
+                        "It encrypts sensitive tables automatically",
+                        "It provides automated database backups", "B"),
+                GeneratedQuestion.mcq("Which best describes a RESTful API architecture?",
+                        "Stateful sessions stored on server memory",
+                        "Stateless client-server communication using standard HTTP methods",
+                        "A peer-to-peer binary socket protocol",
+                        "An asynchronous file transport mechanism", "B"),
+                GeneratedQuestion.mcq("Which data structure operates on a First-In-First-Out (FIFO) basis?",
+                        "Stack", "Binary Tree", "Queue", "Hash Map", "C"),
+                GeneratedQuestion.mcq("What does ACID stand for in transaction processing?",
                         "Atomicity, Consistency, Isolation, Durability",
                         "Automated, Consistent, Indexed, Distributed",
                         "Asynchronous, Concurrent, Integrated, Dynamic",
                         "Authenticated, Committed, Isolated, Durable", "A"),
-                new GeneratedQuestion("Which protocol is used to send emails?",
-                        "HTTP", "FTP", "SMTP", "SSH", "C"),
-                new GeneratedQuestion("What is the main purpose of Docker?",
-                        "Version control for code",
-                        "Running virtual machines",
-                        "Containerising applications for consistent deployment",
-                        "Database management", "C"),
-                new GeneratedQuestion("What is a JWT used for?",
-                        "Database transactions",
-                        "Stateless authentication and information exchange",
-                        "Compressing JSON data",
-                        "Encrypting database passwords", "B"),
-                new GeneratedQuestion("Which sorting algorithm has O(n log n) average-case complexity?",
-                        "Bubble Sort", "Insertion Sort", "Merge Sort", "Selection Sort", "C")
+                GeneratedQuestion.mcq("In Git, what does `git merge` do compared to `git rebase`?",
+                        "Merge deletes the source branch, rebase preserves it",
+                        "Merge creates a commit uniting histories, while rebase replays commits on top of another base",
+                        "Rebase only works on remote repositories",
+                        "Merge cannot resolve merge conflicts", "B"),
+                GeneratedQuestion.mcq("What is the average time complexity of searching an element in a balanced Hash Map?",
+                        "O(1)", "O(log n)", "O(n)", "O(n log n)", "A"),
+                GeneratedQuestion.mcq("Which HTTP status code signifies that the client is not authenticated?",
+                        "400 Bad Request", "401 Unauthorized", "403 Forbidden", "404 Not Found", "B"),
+                GeneratedQuestion.mcq("What is the primary role of a connection pool like HikariCP?",
+                        "To compile SQL statements into native machine code",
+                        "To reuse physical database connections to minimize latency and overhead",
+                        "To shard database tables across multiple servers",
+                        "To cache HTTP responses on the client side", "B"),
+                GeneratedQuestion.mcq("What is the main advantage of containerization with Docker?",
+                        "It provides virtual hardware emulation like full hypervisors",
+                        "It packages an application and its dependencies into a lightweight, consistent environment",
+                        "It guarantees zero CPU usage when idle",
+                        "It replaces relational database management systems", "B"),
+                GeneratedQuestion.mcq("In microservices, what is the purpose of an API Gateway?",
+                        "It serves as a single entry point for routing, authentication, and rate limiting",
+                        "It replaces all microservice databases with a single shared schema",
+                        "It converts all HTTP requests directly into hardware instructions",
+                        "It prevents clients from using HTTPS encryption", "A")
         );
     }
 }

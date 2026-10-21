@@ -1,6 +1,6 @@
 package com.irp.HR.Service;
 
-import com.irp.HR.DTO.JobRequest;
+import com.irp.HR.Dto.JobRequest;
 import com.irp.HR.Exception.InvalidJobTransitionException;
 import com.irp.HR.Exception.JobNotFoundException;
 import com.irp.HR.Model.Job;

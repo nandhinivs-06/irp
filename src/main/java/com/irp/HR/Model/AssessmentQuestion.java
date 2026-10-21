@@ -25,24 +25,39 @@ public class AssessmentQuestion {
     @JoinColumn(name = "assessment_id", nullable = false)
     private Assessment assessment;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private QuestionType questionType = QuestionType.MCQ;
+
     @Column(columnDefinition = "TEXT", nullable = false)
     private String questionText;
 
-    @Column(nullable = false)
+    @Column(nullable = true)
     private String optionA;
 
-    @Column(nullable = false)
+    @Column(nullable = true)
     private String optionB;
 
-    @Column(nullable = false)
+    @Column(nullable = true)
     private String optionC;
 
-    @Column(nullable = false)
+    @Column(nullable = true)
     private String optionD;
 
-    // NEVER exposed via any DTO sent to the candidate before submission. "A" | "B" | "C" | "D"
-    @Column(nullable = false, length = 1)
+    // For MCQs: "A" | "B" | "C" | "D". Null for coding questions.
+    @Column(nullable = true, length = 1)
     private String correctOption;
+
+    @Column(columnDefinition = "TEXT", nullable = true)
+    private String starterCode;
+
+    // JSON array of test cases: [{"input": "...", "expectedOutput": "...", "hidden": false}]
+    @Column(columnDefinition = "TEXT", nullable = true)
+    private String testCases;
+
+    @Column(nullable = true)
+    private String allowedLanguages;
 
     @Column(nullable = false)
     private Integer orderIndex;

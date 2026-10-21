@@ -16,6 +16,7 @@ import java.util.UUID;
 @Builder
 public class QuestionReviewDTO {
     private UUID id;
+    private String questionType;
     private String questionText;
     private String optionA;
     private String optionB;
@@ -23,6 +24,11 @@ public class QuestionReviewDTO {
     private String optionD;
     private String correctOption;
     private String selectedOption;
+    private String submittedCode;
+    private String selectedLanguage;
+    private Integer passedTestCases;
+    private Integer totalTestCases;
+    private String executionOutput;
     private Boolean isCorrect;
     private Integer orderIndex;
 }

@@ -46,6 +46,14 @@ public class AssessmentController {
         return ResponseEntity.ok(assessmentService.submitAssessment(request, principal.getId()));
     }
 
+    @PostMapping("/{id}/run-code")
+    public ResponseEntity<com.irp.HR.Dto.CodeRunResponse> runCode(
+            @PathVariable UUID id,
+            @Valid @RequestBody com.irp.HR.Dto.RunCodeRequest request,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(assessmentService.runCandidateCode(id, request, principal.getId()));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<AssessmentResponseDTO> get(
             @PathVariable UUID id,

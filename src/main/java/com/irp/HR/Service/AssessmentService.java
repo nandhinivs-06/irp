@@ -1,5 +1,6 @@
 package com.irp.HR.Service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.irp.HR.Dto.*;
 import com.irp.HR.Exception.*;
 import com.irp.HR.Model.*;
@@ -14,11 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -28,9 +25,11 @@ public class AssessmentService {
     private final AssessmentRepository assessmentRepository;
     private final CandidateAnswerRepository candidateAnswerRepository;
     private final AssessmentGeneratorService generatorService;
+    private final CodeExecutionService codeExecutionService;
     private final JobRepository jobRepository;
     private final ResumeRepository resumeRepository;
     private final UserRepository userRepository;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${assessment.cooldown-days:30}")
     private int cooldownDays;
@@ -38,7 +37,7 @@ public class AssessmentService {
     @Value("${assessment.start-window-hours:48}")
     private int startWindowHours;
 
-    @Value("${assessment.tab-switch-flag-threshold:3}")
+    @Value("${assessment.tab-switch-flag-threshold:1}")
     private int tabSwitchFlagThreshold;
 
     private static final int QUESTION_COUNT = 20;
@@ -58,12 +57,8 @@ public class AssessmentService {
                 });
 
         Job job = jobRepository.findById(jobId)
-                .orElseThrow(() -> new IllegalArgumentException("Job not found with id: " + jobId));
+                .orElseThrow(() -> new JobNotFoundException(jobId));
 
-        // Pull years of experience ONCE and reuse it for both the difficulty
-        // tier AND the concrete calibration text sent to the model, so the
-        // two stay in sync (previously only the tier label was passed on,
-        // and the model never saw the actual number).
         Integer years = resumeRepository.findTopByCandidateIdOrderByUploadedAtDesc(candidateId)
                 .map(Resume::getYearsOfExperience)
                 .orElse(null);
@@ -78,9 +73,9 @@ public class AssessmentService {
                 .jobId(jobId)
                 .difficultyLevel(difficulty)
                 .status(AssessmentStatus.GENERATED)
-                .totalQuestions(generated.size())   // use actual count (may be 15-20)
+                .totalQuestions(generated.size())
                 .createdAt(LocalDateTime.now())
-                .expiresAt(LocalDateTime.now().plusHours(startWindowHours)) // window to START
+                .expiresAt(LocalDateTime.now().plusHours(startWindowHours))
                 .tabSwitchCount(0)
                 .flaggedForCheating(false)
                 .build();
@@ -90,12 +85,16 @@ public class AssessmentService {
         for (GeneratedQuestion gq : generated) {
             questionEntities.add(AssessmentQuestion.builder()
                     .assessment(assessment)
+                    .questionType(gq.questionType() != null ? gq.questionType() : QuestionType.MCQ)
                     .questionText(gq.questionText())
                     .optionA(gq.optionA())
                     .optionB(gq.optionB())
                     .optionC(gq.optionC())
                     .optionD(gq.optionD())
                     .correctOption(gq.correctOption())
+                    .starterCode(gq.starterCode())
+                    .testCases(gq.testCases())
+                    .allowedLanguages(gq.allowedLanguages())
                     .orderIndex(index++)
                     .build());
         }
@@ -127,7 +126,6 @@ public class AssessmentService {
         if (assessment.getStatus() == AssessmentStatus.GENERATED) {
             assessment.setStatus(AssessmentStatus.IN_PROGRESS);
             assessment.setStartedAt(LocalDateTime.now());
-            // Override expiresAt to a fixed test-taking window from NOW
             assessment.setExpiresAt(LocalDateTime.now().plusMinutes(TEST_DURATION_MINUTES));
             assessmentRepository.save(assessment);
         }
@@ -136,7 +134,7 @@ public class AssessmentService {
     }
 
     // ---------------------------------------------------------------
-    // 3. SUBMIT (server-side scoring only)
+    // 3. SUBMIT (server-side scoring for both MCQs & Coding Questions)
     // ---------------------------------------------------------------
     @Transactional
     public AssessmentResultDTO submitAssessment(SubmitAssessmentRequest request, UUID candidateId) {
@@ -154,23 +152,68 @@ public class AssessmentService {
         for (SubmitAnswerDTO answerDTO : request.getAnswers()) {
             AssessmentQuestion question = questionsById.get(answerDTO.getQuestionId());
             if (question == null) {
-                continue; // ignore answers for questions not belonging to this assessment
+                continue;
             }
-            boolean isCorrect = question.getCorrectOption().equalsIgnoreCase(answerDTO.getSelectedOption());
-            if (isCorrect) {
-                correctCount++;
+
+            if (question.getQuestionType() == QuestionType.CODING) {
+                List<CodeExecutionService.TestCaseDefinition> testCases =
+                        codeExecutionService.parseTestCases(question.getTestCases());
+
+                String code = answerDTO.getSubmittedCode() != null ? answerDTO.getSubmittedCode().trim() : "";
+                String lang = answerDTO.getSelectedLanguage() != null ? answerDTO.getSelectedLanguage() : "python";
+
+                int passed = 0;
+                int total = testCases.size();
+                boolean isCorrect = false;
+                String output = "No code submitted";
+
+                // Check if code was actually written and not just the unedited TODO template
+                boolean hasUserCode = !code.isEmpty()
+                        && !code.contains("# TODO: Write your solution here")
+                        && !code.contains("// TODO: Write your solution here");
+
+                if (hasUserCode) {
+                    CodeRunResponse exec = codeExecutionService.execute(code, lang, testCases, false);
+                    passed = exec.getPassedCount();
+                    total = exec.getTotalCount();
+                    isCorrect = (total > 0 && passed == total);
+                    output = passed + "/" + total + " test cases passed";
+                }
+
+                if (isCorrect) {
+                    correctCount++;
+                }
+
+                candidateAnswerRepository.save(CandidateAnswer.builder()
+                        .assessment(assessment)
+                        .question(question)
+                        .submittedCode(code)
+                        .selectedLanguage(lang)
+                        .passedTestCases(passed)
+                        .totalTestCases(total)
+                        .executionOutput(output)
+                        .correct(isCorrect)
+                        .build());
+
+            } else {
+                String selected = answerDTO.getSelectedOption() != null ? answerDTO.getSelectedOption().toUpperCase() : "";
+                boolean isCorrect = question.getCorrectOption() != null && question.getCorrectOption().equalsIgnoreCase(selected);
+                if (isCorrect) {
+                    correctCount++;
+                }
+
+                candidateAnswerRepository.save(CandidateAnswer.builder()
+                        .assessment(assessment)
+                        .question(question)
+                        .selectedOption(selected)
+                        .correct(isCorrect)
+                        .build());
             }
-            candidateAnswerRepository.save(CandidateAnswer.builder()
-                    .assessment(assessment)
-                    .question(question)
-                    .selectedOption(answerDTO.getSelectedOption().toUpperCase())
-                    .correct(isCorrect)
-                    .build());
         }
 
         int tabSwitches = request.getTabSwitchCount() != null ? request.getTabSwitchCount() : 0;
         int totalQuestions = assessment.getTotalQuestions();
-        int score = Math.round((correctCount * 100.0f) / totalQuestions);
+        int score = totalQuestions > 0 ? Math.round((correctCount * 100.0f) / totalQuestions) : 0;
 
         assessment.setCorrectCount(correctCount);
         assessment.setScore(score);
@@ -194,7 +237,29 @@ public class AssessmentService {
     }
 
     // ---------------------------------------------------------------
-    // 4. FETCH (resume an in-progress assessment; still no correct answers)
+    // 4. RUN CODE (test code live against visible sample test cases)
+    // ---------------------------------------------------------------
+    public CodeRunResponse runCandidateCode(UUID assessmentId, RunCodeRequest request, UUID candidateId) {
+        Assessment assessment = getOwnedAssessment(assessmentId, candidateId);
+
+        AssessmentQuestion question = assessment.getQuestions().stream()
+                .filter(q -> q.getId().equals(request.getQuestionId()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Question not found in assessment"));
+
+        if (question.getQuestionType() != QuestionType.CODING) {
+            throw new IllegalArgumentException("Question is not a coding question");
+        }
+
+        List<CodeExecutionService.TestCaseDefinition> testCases =
+                codeExecutionService.parseTestCases(question.getTestCases());
+
+        // Run ONLY visible sample test cases
+        return codeExecutionService.execute(request.getCode(), request.getLanguage(), testCases, true);
+    }
+
+    // ---------------------------------------------------------------
+    // 5. FETCH (resume an in-progress assessment; still no correct answers)
     // ---------------------------------------------------------------
     @Transactional(readOnly = true)
     public AssessmentResponseDTO getAssessment(UUID assessmentId, UUID candidateId) {
@@ -203,7 +268,7 @@ public class AssessmentService {
     }
 
     // ---------------------------------------------------------------
-    // 5. REVIEW (candidate sees correct vs. selected answers, post-submit only)
+    // 6. REVIEW (candidate sees correct vs. selected answers, post-submit only)
     // ---------------------------------------------------------------
     @Transactional(readOnly = true)
     public AssessmentReviewDTO getAssessmentReview(UUID assessmentId, UUID candidateId) {
@@ -223,6 +288,7 @@ public class AssessmentService {
                     CandidateAnswer answer = answersByQuestionId.get(q.getId());
                     return QuestionReviewDTO.builder()
                             .id(q.getId())
+                            .questionType(q.getQuestionType() != null ? q.getQuestionType().name() : "MCQ")
                             .questionText(q.getQuestionText())
                             .optionA(q.getOptionA())
                             .optionB(q.getOptionB())
@@ -230,6 +296,11 @@ public class AssessmentService {
                             .optionD(q.getOptionD())
                             .correctOption(q.getCorrectOption())
                             .selectedOption(answer != null ? answer.getSelectedOption() : null)
+                            .submittedCode(answer != null ? answer.getSubmittedCode() : null)
+                            .selectedLanguage(answer != null ? answer.getSelectedLanguage() : null)
+                            .passedTestCases(answer != null ? answer.getPassedTestCases() : null)
+                            .totalTestCases(answer != null ? answer.getTotalTestCases() : null)
+                            .executionOutput(answer != null ? answer.getExecutionOutput() : null)
                             .isCorrect(answer != null ? answer.getCorrect() : false)
                             .orderIndex(q.getOrderIndex())
                             .build();
@@ -250,7 +321,7 @@ public class AssessmentService {
     }
 
     // ---------------------------------------------------------------
-    // 6. RECRUITER VIEW - all candidates' results for a job, filterable
+    // 7. RECRUITER VIEW - all candidates' results for a job, filterable
     // ---------------------------------------------------------------
     @Transactional(readOnly = true)
     public List<CandidateAssessmentSummaryDTO> getJobAssessments(
@@ -301,14 +372,6 @@ public class AssessmentService {
         return assessment;
     }
 
-    /**
-     * Maps years of experience to a difficulty tier.
-     * No resume uploaded yet, or the model couldn't tell -> defaults to EASY.
-     *
-     * years == null or < 2  -> EASY   (fresher / beginner)
-     * years 2-5             -> MEDIUM (intermediate)
-     * years > 5             -> HARD   (senior)
-     */
     private DifficultyLevel resolveDifficulty(Integer years) {
         if (years == null) {
             return DifficultyLevel.EASY;
@@ -321,18 +384,47 @@ public class AssessmentService {
         }
     }
 
+    private String extractSampleTestCases(String testCasesJson) {
+        if (testCasesJson == null || testCasesJson.isBlank()) return "[]";
+        try {
+            List<CodeExecutionService.TestCaseDefinition> all = codeExecutionService.parseTestCases(testCasesJson);
+            List<Map<String, String>> samples = new ArrayList<>();
+            for (CodeExecutionService.TestCaseDefinition tc : all) {
+                if (!tc.isHidden) {
+                    samples.add(Map.of(
+                            "input", tc.input != null ? tc.input : "",
+                            "expectedOutput", tc.expectedOutput != null ? tc.expectedOutput : ""
+                    ));
+                }
+            }
+            return objectMapper.writeValueAsString(samples);
+        } catch (Exception e) {
+            return "[]";
+        }
+    }
+
     private AssessmentResponseDTO toResponseDTO(Assessment assessment) {
         List<QuestionDTO> questionDTOs = assessment.getQuestions().stream()
-                .sorted((a, b) -> a.getOrderIndex().compareTo(b.getOrderIndex()))
-                .map(q -> QuestionDTO.builder()
-                        .id(q.getId())
-                        .questionText(q.getQuestionText())
-                        .optionA(q.getOptionA())
-                        .optionB(q.getOptionB())
-                        .optionC(q.getOptionC())
-                        .optionD(q.getOptionD())
-                        .orderIndex(q.getOrderIndex())
-                        .build())
+                .sorted(Comparator.comparing(AssessmentQuestion::getOrderIndex))
+                .map(q -> {
+                    String sampleCases = null;
+                    if (q.getQuestionType() == QuestionType.CODING && q.getTestCases() != null) {
+                        sampleCases = extractSampleTestCases(q.getTestCases());
+                    }
+                    return QuestionDTO.builder()
+                            .id(q.getId())
+                            .questionType(q.getQuestionType() != null ? q.getQuestionType().name() : "MCQ")
+                            .questionText(q.getQuestionText())
+                            .optionA(q.getOptionA())
+                            .optionB(q.getOptionB())
+                            .optionC(q.getOptionC())
+                            .optionD(q.getOptionD())
+                            .starterCode(q.getStarterCode())
+                            .allowedLanguages(q.getAllowedLanguages())
+                            .sampleTestCases(sampleCases)
+                            .orderIndex(q.getOrderIndex())
+                            .build();
+                })
                 .collect(Collectors.toList());
 
         return AssessmentResponseDTO.builder()

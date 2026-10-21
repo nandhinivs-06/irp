@@ -31,8 +31,24 @@ public class CandidateAnswer {
     @JoinColumn(name = "question_id", nullable = false)
     private AssessmentQuestion question;
 
-    @Column(nullable = false, length = 1)
+    // For MCQ questions: "A" | "B" | "C" | "D". Null for coding questions.
+    @Column(nullable = true, length = 1)
     private String selectedOption;
+
+    @Column(columnDefinition = "TEXT", nullable = true)
+    private String submittedCode;
+
+    @Column(nullable = true)
+    private String selectedLanguage;
+
+    @Column(nullable = true)
+    private Integer passedTestCases;
+
+    @Column(nullable = true)
+    private Integer totalTestCases;
+
+    @Column(columnDefinition = "TEXT", nullable = true)
+    private String executionOutput;
 
     @Column(nullable = false)
     private Boolean correct;

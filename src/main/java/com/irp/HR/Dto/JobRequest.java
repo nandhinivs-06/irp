@@ -1,4 +1,4 @@
-package com.irp.HR.DTO;
+package com.irp.HR.Dto;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;

@@ -1,4 +1,4 @@
-package com.irp.HR.DTO;
+package com.irp.HR.Dto;
 
 import com.irp.HR.Model.Job;
 import com.irp.HR.Model.JobStatus;
